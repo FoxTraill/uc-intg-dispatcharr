@@ -1,160 +1,177 @@
-# uc-intg-dispatcharr
+# Dispatcharr for Unfolded Circle Remote
 
-[Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) integration for the
-Unfolded Circle Remote 3. It runs natively on the remote as a custom
-integration (aarch64 binary) and shows what is currently playing on one of
-your IPTV clients.
+Show what's playing on your IPTV box — right on your Unfolded Circle Remote.
+
+This custom integration connects your remote to
+[Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) and displays the
+channel logo, the current program and its progress for one playback device.
+When a stream stutters, switch to another source with a single tap.
+
+<!-- Screenshot: add a photo of the widget as docs/screenshot.png and uncomment:
+![Widget on the Remote 3](docs/screenshot.png)
+-->
+
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Setup](#setup)
+- [Entities](#entities)
+- [How it works](#how-it-works)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [License](#license)
 
 ## Features
 
-- **Media player widget** with the channel logo, the current EPG program and
-  its progress, filtered by the IP address of your playback device
-  (e.g. an NVIDIA Shield or Apple TV).
-- **Stream source switching** for the running channel:
-  - next / previous source from the widget,
-  - direct selection from the source list,
-  - tapping the logo also switches to the next source.
-- **"Next Source" button entity** that can be placed on UI pages or used in
-  macros, without the media player and without polling.
-- **Logo proxy** that trims and resizes channel logos so they look consistent
-  in the widget.
+- 📺 **Now playing widget** — channel logo, EPG title and progress bar for the
+  device you choose (e.g. NVIDIA Shield or Apple TV)
+- 🔀 **Source switching** — next / previous source, pick one from the list,
+  or simply tap the logo
+- 🔘 **"Next Source" button** — for UI pages and macros, works without the
+  widget
+- 🖼️ **Clean logos** — logos are trimmed and scaled so they look consistent
+- 🔋 **Battery friendly** — only polls while the widget is in use, pauses in
+  standby
+- 🏠 **Runs on the remote** — no extra server or Docker container needed
 
-Playback itself is not controlled by this integration; use the integration
-of your player (e.g. ADB Bridge) in the same activity.
+The integration does not control playback. Use your player's integration
+(e.g. Android TV or ADB Bridge) in the same activity for that.
+
+## Requirements
+
+| | |
+|---|---|
+| **Remote** | Remote 3 (Remote Two should work too, but is untested) — firmware 2.9.3+ recommended for in-place updates |
+| **Dispatcharr** | Reachable from the remote, with an API key |
+| **API user** | Admin rights — needed for switching sources |
 
 ## Installation
 
 1. Download `uc-intg-dispatcharr-<version>-aarch64.tar.gz` from the
    [latest release](https://github.com/FoxTraill/uc-intg-dispatcharr/releases/latest).
-2. Web configurator → Integrations → Add new → Install custom → upload the
-   archive (do not extract it). When updating, check
-   "Update existing driver".
-3. Fill in the setup form:
-   - **Dispatcharr URL**: e.g. `http://192.168.1.10:9191`
-   - **API key**: key of a user with admin rights (without admin rights,
-     switching sources fails with HTTP 403)
-   - **Client IP**: IP address of the playback device
-   - **Poll interval**: 5–60 s, default 10 s
-4. Add the entities to your activities:
-   - `dispatcharr_now_playing` (media player) — widget
-   - `dispatcharr_next_source` (button) — source switching without polling
+2. Open the web configurator → **Integrations** → **Add new** →
+   **Install custom** and upload the file. Don't extract it.
+   To update, upload the new file and check **Update existing driver**.
+3. Complete the setup (see below).
+4. Add the entities to your TV activity.
 
-## Power usage
+## Setup
 
-- The poll loop only runs while the media player entity is subscribed,
-  i.e. while an activity using it is active.
-- The button alone does not cause any polling; it fetches the current
-  channel when pressed.
-- `enter_standby` stops the runtime, `exit_standby` starts it again if one of
-  the entities is still subscribed.
-- EPG data is cached for 60 s and source lists for 10 min.
+| Field | Example | Description |
+|---|---|---|
+| **Dispatcharr URL** | `http://192.168.1.10:9191` | Address of your Dispatcharr server |
+| **API key** | | API key of a Dispatcharr user with admin rights |
+| **Client IP** | `192.168.1.50` | IP of the device you watch on — only its stream is shown |
+| **Poll interval** | `10` | How often the status is refreshed, 5–60 seconds |
 
-## Build
+## Entities
 
-Builds run automatically on GitHub (see [Releases](#releases)). To build
-locally you need Docker; on Apple Silicon the build runs natively:
+| Entity | Type | What it does |
+|---|---|---|
+| `dispatcharr_now_playing` | Media player | Widget with logo, program and progress |
+| `dispatcharr_next_source` | Button | Switches to the next source of the running channel |
 
-```bash
-chmod +x build.sh
-./build.sh
+### Media player attributes
+
+| Attribute | Content |
+|---|---|
+| State | `Playing` while your client watches a channel, otherwise `Off` |
+| Title | Current program (with episode title), or the channel name without EPG data |
+| Artist | Active source, e.g. `RTL · 2/7 · Provider` (prefixed with the channel name if there is no logo) |
+| Artwork | Channel logo from the built-in logo proxy |
+| Position / duration | Progress of the current program |
+| Media type | `channel` |
+| Source / source list | Sources of the running channel, in failover order |
+
+### Media player commands
+
+| Command | Action |
+|---|---|
+| Next | Switch to the next source (wraps around) |
+| Previous | Switch to the previous source |
+| Select source | Switch to the selected source |
+| Play / pause | Tapping the logo in the widget — switches to the next source |
+
+Playback commands like play, pause or volume are not supported. Use your
+player's integration for those.
+
+## How it works
+
+```mermaid
+flowchart LR
+    R["Remote<br/>(widget)"] <--> I["Integration<br/>on the remote"]
+    I -- "status, EPG, sources" --> D["Dispatcharr"]
+    I -- "logos" --> P["Logo proxy<br/>port 19191"] --> R
 ```
 
-Result: `uc-intg-dispatcharr-<version>-aarch64.tar.gz`.
+The integration polls Dispatcharr for active streams and picks the one
+watched by your client IP. Channel logos are served by a small built-in proxy
+that trims and resizes them for the widget.
 
-The build uses the official `unfoldedcircle/r2-pyinstaller` image with
-`--platform=linux/arm64` and a PyInstaller `--onedir` bundle, as recommended
-by Unfolded Circle.
+## Troubleshooting
 
-### Where the driver looks for driver.json
+<details>
+<summary><b>Switching sources does nothing</b></summary>
 
-`driver.py` looks for `driver.json` next to `__file__` first, then in the
-working directory. In the frozen bundle `__file__` points to `_internal/`,
-so `build.sh` places the file in three locations:
+The API key needs admin rights in Dispatcharr (the log shows HTTP 403).
+Switching also only works while the channel is actually playing, and the
+channel needs more than one source.
+</details>
 
-- `artifacts/driver.json` — metadata for the web configurator (required)
-- `artifacts/bin/driver.json` — fallback via `os.getcwd()`
-- inside the bundle via `--add-data` — found via `__file__`
+<details>
+<summary><b>The widget stays empty</b></summary>
 
-This way the driver starts regardless of the working directory the core
-uses.
+Check that **Client IP** matches the IP address Dispatcharr shows for your
+player under *Stats*. If your player uses a VPN or proxy, Dispatcharr sees
+that address instead.
+</details>
 
-## Releases
+<details>
+<summary><b>A logo looks wrong</b></summary>
 
-GitHub Actions builds the archive (`.github/workflows/build.yml`):
+Logos come from Dispatcharr. Very small or low-resolution source images stay
+small or blurry. Please open an issue with the channel name.
+</details>
 
-- **Pull request** → test build, the archive is attached to the workflow run
-  under *Actions*.
-- **Version tag** → build plus GitHub release with the `.tar.gz` and its
-  SHA256 checksum.
+<details>
+<summary><b>Where are the logs?</b></summary>
 
-To publish a new version:
+Web configurator → **Settings** → **Development** → **Logs**. Please attach
+the relevant part when opening an issue.
+</details>
 
-1. Bump `version` in `driver.json` and add a changelog entry below.
-2. Merge into `main`.
-3. On GitHub: *Releases → Draft a new release → Choose a tag* → enter
-   `v<version>` (e.g. `v0.8.4`) → *Create new tag* → *Publish release*.
-   Or locally: `git tag v0.8.4 && git push origin v0.8.4`.
+## Development
 
-If the tag does not match the version in `driver.json`, the build fails.
-The build runs under emulation and takes a few minutes.
+Building, releasing and technical details are described in
+[docs/development.md](docs/development.md).
 
-## Migrating from the Docker variant
+## Versioning
 
-The on-device variant uses a different `driver_id` than the former Docker
-variant, so the core treats them as separate integrations and both can run
-side by side while testing.
-
-| | Docker (`dispatcharr_ext`) | On-device (`dispatcharr_local`) |
-|---|---|---|
-| Runtime | LXC container, Dockge | directly on the remote |
-| Config | `/opt/stacks/intg-dispatcharr/data/config.json` | `$UC_CONFIG_HOME/config.json` (core sandbox) |
-| Logo proxy | port 19191 on the LXC | port 19191 on the remote |
-| Update | `docker compose up -d --build` | upload a new release in the web configurator |
-
-Port 19191 is outside the ranges blocked by the core (8000–9200, 13333).
-
-Once the on-device variant works:
-
-1. Stop the `intg-dispatcharr` Docker stack in Dockge.
-2. Web configurator → Integrations → "Dispatcharr Now Playing (extern)" →
-   delete.
-3. Remove the stack in Dockge.
+This project uses [Semantic Versioning](https://semver.org/). Available
+versions are listed on the
+[releases page](https://github.com/FoxTraill/uc-intg-dispatcharr/releases).
 
 ## Changelog
 
-### 0.8.4 — Logos, UC guidelines
+All notable changes are documented in the [changelog](CHANGELOG.md).
 
-- **Logos** (`image_proxy.py`) — empty borders (transparent or solid color)
-  are trimmed before scaling. The height now uses 94 % instead of 75 % of the
-  canvas; the width stays at 75 % because the widget only crops at the
-  sides. Square logos: 96×96 → 120×120 px, logos with built-in padding up to
-  more than three times their previous size. The logo URL carries
-  `?v=<RENDER_VERSION>` so the remote does not show stale cached images for
-  up to 24 h.
-- **`driver.json`** — API key as password field, developer and home page
-  point to this repository instead of the Dispatcharr project.
-- **`driver.py`**
-  - `media_type` is `channel` instead of `tv_show` (live TV).
-  - Log level can be set via `UC_LOG_LEVEL`.
-  - Channels without EPG data re-downloaded the full EPG response (~200 KB)
-    on every poll; the 60 s cache now applies there as well.
-  - `exit_standby` only starts the runtime if an entity is subscribed.
-  - An invalid poll interval in setup returns a `SetupError` instead of
-    raising an exception; values are clamped to 5–60 s.
-- **GitHub Actions** — automated builds and releases.
+## Contributions
 
-### 0.8.3 — Wakeup robustness (on-device)
+Bug reports and ideas are welcome — please
+[open an issue](https://github.com/FoxTraill/uc-intg-dispatcharr/issues/new/choose).
+For general questions about the remote, the
+[Unfolded Circle community forum](https://unfolded.community/) is the best
+place.
 
-Two bugs that only occur on-device: the remote re-establishes its Wi-Fi only
-after the `EXIT_STANDBY` event, but the first HTTP request follows about
-35 ms later. In the LXC container this time window never existed.
+## License
 
-- **`client.py`** — `refresh_channel_cache()` unconditionally overwrote the
-  existing cache, even when the fetch failed. A network error on wakeup
-  therefore deleted logos or channels until the next regular refresh six
-  hours later. The existing cache is now kept when a fetch fails.
-- **`driver.py`** — `_start_runtime()` made exactly one attempt and set
-  `DeviceStates.ERROR` with `return False` on an empty cache. No further
-  attempt followed, so the integration stayed dead until the next standby
-  cycle. Now five attempts with backoff (2/4/6/8 s, at most 20 s), ERROR only
-  after that.
+This project is licensed under the [MIT License](LICENSE). It is provided
+"as is", without warranty of any kind. Bundled third-party packages keep
+their own licenses, see [docs/licenses.md](docs/licenses.md).
+
+## Credits
+
+- [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) — IPTV stream
+  and EPG management
+- [Unfolded Circle integration library](https://github.com/unfoldedcircle/integration-python-library)
+  — Python API wrapper for the remote
