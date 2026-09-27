@@ -1,6 +1,6 @@
 {
   "driver_id": "dispatcharr_local",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "min_core_api": "0.20.0",
   "name": {
     "en": "Dispatcharr Now Playing",
@@ -12,10 +12,10 @@
     "de": "Zeigt den aktuell laufenden IPTV-Sender von Dispatcharr (gefiltert nach Client-IP). Media-Player-Widget mit Senderlogo, aktuellem EPG-Programm und Stream-Quellenwechsel. Laeuft nativ auf der Remote."
   },
   "developer": {
-    "name": "Community",
-    "url": "https://github.com/Dispatcharr/Dispatcharr"
+    "name": "FoxTraill",
+    "url": "https://github.com/FoxTraill/uc-intg-dispatcharr"
   },
-  "home_page": "https://github.com/Dispatcharr/Dispatcharr",
+  "home_page": "https://github.com/FoxTraill/uc-intg-dispatcharr",
   "setup_data_schema": {
     "title": {
       "en": "Dispatcharr setup",
@@ -41,7 +41,7 @@
           "de": "API Key"
         },
         "field": {
-          "text": {
+          "password": {
             "value": ""
           }
         }
@@ -74,5 +74,5 @@
       }
     ]
   },
-  "release_date": "2026-09-12"
+  "release_date": "2026-09-27"
 }
