@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build aarch64 binary for the UC Remote 3 and pack the installable tar.gz.
-# Run on the Mac (Apple Silicon = native arm64). Requires Docker Desktop.
+# Requires Docker. Runs natively on Apple Silicon, elsewhere under arm64
+# emulation (QEMU/binfmt).
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -24,10 +25,10 @@ mkdir -p artifacts/bin
 mv dist/intg-dispatcharr/* artifacts/bin
 mv artifacts/bin/intg-dispatcharr artifacts/bin/driver
 
-# driver.json an alle drei Stellen, an denen der Core bzw. der Treiber sucht:
-# - artifacts/        -> Metadaten fuer den Web-Configurator (Pflicht)
-# - artifacts/bin/    -> Fallback ueber os.getcwd()
-# - im Bundle         -> ueber --add-data, Fallback ueber __file__
+# driver.json in all three places where the core or the driver looks for it:
+# - artifacts/        -> metadata for the web configurator (required)
+# - artifacts/bin/    -> fallback via os.getcwd()
+# - in the bundle     -> via --add-data, fallback via __file__
 cp driver.json artifacts/
 cp driver.json artifacts/bin/
 cp LICENSE artifacts/
@@ -37,5 +38,5 @@ tar czf "$OUT" -C artifacts .
 rm -rf dist build artifacts intg-dispatcharr.spec
 
 echo ""
-echo "Fertig: $OUT"
-echo "Installation: Web-Configurator -> Integrationen -> Hinzufuegen -> Eigene Integration -> $OUT"
+echo "Done: $OUT"
+echo "Install: web configurator -> Integrations -> Add new -> Install custom -> $OUT"

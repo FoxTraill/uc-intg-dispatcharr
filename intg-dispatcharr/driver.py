@@ -2,10 +2,10 @@
 """
 Dispatcharr Now Playing - UC Remote 3 Custom Integration.
 
-Liefert eine Media Player Entity, die per Polling den aktiven
-Dispatcharr-Stream der konfigurierten Client-IP (z.B. die Shield)
-anzeigt, plus einen Button für den Quellenwechsel. Die Wiedergabe
-selbst steuert weiterhin die ADB Bridge Integration.
+Provides a media player entity that polls and shows the active
+Dispatcharr stream of the configured client IP (e.g. an NVIDIA Shield),
+plus a button for switching sources. Playback itself is still controlled
+by the player's own integration (e.g. ADB Bridge).
 """
 
 import asyncio
@@ -44,7 +44,7 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 _LOG = logging.getLogger("intg-dispatcharr")
-# UC-Konvention: Log-Level über UC_LOG_LEVEL steuerbar (DEBUG, INFO, ...)
+# UC convention: log level configurable via UC_LOG_LEVEL (DEBUG, INFO, ...)
 _LOG_LEVEL = os.getenv("UC_LOG_LEVEL", "INFO").upper()
 for _name in ("intg-dispatcharr", "ucapi", "client", "config", "image_proxy"):
     logging.getLogger(_name).setLevel(_LOG_LEVEL)
@@ -64,37 +64,37 @@ logo_proxy: Optional[LogoProxy] = None
 ENTITY_ID = "dispatcharr_now_playing"
 ENTITY_NAME = {"en": "TV Now Playing", "de": "TV Now Playing"}
 
-# Separate Button-Entity: frei auf UI-Pages platzierbar und in
-# Activities/Macros nutzbar, ohne den Media Player zu brauchen.
+# Separate button entity: can be placed freely on UI pages and used in
+# activities/macros without needing the media player.
 BUTTON_ID = "dispatcharr_next_source"
 BUTTON_NAME = {"en": "Next Source", "de": "Nächste Quelle"}
 
-# Welche unserer Entities die Remote gerade abonniert hat.
-# Der Poll-Loop läuft nur wenn der Media Player dabei ist - der
-# Button allein braucht kein Polling, der holt sich den aktuellen
-# Kanal beim Druck frisch ab.
+# Which of our entities the remote has currently subscribed.
+# The poll loop only runs while the media player is among them - the
+# button alone needs no polling, it fetches the current channel when
+# pressed.
 _subscribed: set[str] = set()
 
-# Aktuell laufender Kanal/Quelle (aus dem letzten Status-Poll).
+# Currently running channel/source (from the last status poll).
 _current_channel_uuid: Optional[str] = None
 _current_channel_id: Optional[int] = None
 _current_stream_id: Optional[int] = None
 
-# Quellenliste pro Kanal: channel_id -> (streams, fetch_timestamp)
-# Ändert sich selten, aber nicht nie (Provider kommen/gehen).
+# Source list per channel: channel_id -> (streams, fetch_timestamp)
+# Changes rarely, but not never (providers come and go).
 _source_cache: dict[int, tuple[list[dict[str, Any]], float]] = {}
 _SOURCE_TTL_SECONDS = 600.0
 
-# Polling-Tasks
+# Polling tasks
 _poll_task: Optional[asyncio.Task] = None
 _cache_task: Optional[asyncio.Task] = None
-# Standby-Pause: wenn gesetzt, läuft polling normal. Wenn clear, wartet
-# der poll loop bis EXIT_STANDBY den Event wieder setzt.
+# Standby pause: when set, polling runs normally. When cleared, the
+# poll loop waits until EXIT_STANDBY sets the event again.
 _active_event: Optional[asyncio.Event] = None
-# Counter für EPG-Throttling: nicht jeder Poll holt EPG, nur jeder N-te
+# Counter for EPG throttling: not every poll fetches EPG, only every Nth
 _poll_counter: int = 0
 
-# Letzter bekannter Zustand (zum Vergleich vor entity_change Events)
+# Last known state (compared before sending entity_change events)
 _last_attrs: dict[str, Any] = {}
 
 
@@ -103,31 +103,31 @@ _last_attrs: dict[str, Any] = {}
 # ----------------------------------------------------------------------
 def _make_entity() -> media_player.MediaPlayer:
     """
-    Media Player Entity.
+    Media player entity.
 
-    Anzeige ist weiterhin der Kern (Logo, EPG-Titel, Fortschritt).
-    Dazu kommen genau drei aktive Kommandos, alle für den Wechsel der
-    Dispatcharr-Quelle des laufenden Senders:
+    Displaying is still the core (logo, EPG title, progress). On top of
+    that there are exactly three active commands, all for switching the
+    Dispatcharr source of the running channel:
 
-    - NEXT     -> nächste Quelle (⏭ im Widget, Ein-Tap-Lösung)
-    - PREVIOUS -> vorherige Quelle
-    - SELECT_SOURCE -> gezielte Auswahl aus der Quellenliste
+    - NEXT     -> next source (⏭ in the widget, one-tap solution)
+    - PREVIOUS -> previous source
+    - SELECT_SOURCE -> pick a specific source from the list
 
-    Kein PLAY/PAUSE/STOP - die Wiedergabe steuert weiterhin der Player
-    selbst (ADB Bridge in der Activity).
+    No PLAY/PAUSE/STOP - playback is still controlled by the player
+    itself (e.g. ADB Bridge in the activity).
     """
     return media_player.MediaPlayer(
         identifier=ENTITY_ID,
         name=ENTITY_NAME,
         features=[
-            # Passive Anzeige
+            # Passive display
             media_player.Features.MEDIA_TITLE,
             media_player.Features.MEDIA_ARTIST,
             media_player.Features.MEDIA_IMAGE_URL,
             media_player.Features.MEDIA_DURATION,
             media_player.Features.MEDIA_POSITION,
             media_player.Features.MEDIA_TYPE,
-            # Quellenwechsel
+            # Source switching
             media_player.Features.NEXT,
             media_player.Features.PREVIOUS,
             media_player.Features.SELECT_SOURCE,
@@ -149,7 +149,7 @@ def _make_entity() -> media_player.MediaPlayer:
 
 
 def _make_button() -> ucapi.Button:
-    """Standalone-Button 'Nächste Quelle' für UI-Pages und Macros."""
+    """Standalone 'Next Source' button for UI pages and macros."""
     return ucapi.Button(
         identifier=BUTTON_ID,
         name=BUTTON_NAME,
@@ -167,7 +167,7 @@ async def _cmd_handler(
     params: Optional[dict[str, Any]],
     *args: Any,
 ) -> StatusCodes:
-    """Quellenwechsel-Kommandos; alles andere wird abgelehnt."""
+    """Source switching commands; everything else is rejected."""
     if cmd_id == media_player.Commands.NEXT:
         return await _switch_relative(+1)
     if cmd_id == media_player.Commands.PREVIOUS:
@@ -178,11 +178,11 @@ async def _cmd_handler(
             return StatusCodes.BAD_REQUEST
         return await _switch_to_source_name(str(source))
 
-    # Ein Tap auf das Logo im Media-Widget schickt play_pause - die
-    # Firmware hat dafür kein eigenes Kommando und das Artwork ist fest
-    # verdrahtet. Wir haben keine Wiedergabesteuerung (die läuft über
-    # ADB Bridge), also ist play_pause hier frei und wird auf den
-    # Quellenwechsel gelegt: Tap aufs Logo = nächste Quelle.
+    # Tapping the logo in the media widget sends play_pause - the
+    # firmware has no dedicated command for it and the artwork action is
+    # hard-wired. We have no playback control (that runs through the
+    # player's integration), so play_pause is free here and mapped to
+    # source switching: tap on the logo = next source.
     if cmd_id == media_player.Commands.PLAY_PAUSE:
         return await _switch_relative(+1)
 
@@ -197,12 +197,11 @@ async def _button_cmd_handler(
     *args: Any,
 ) -> StatusCodes:
     """
-    Button-Druck = nächste Quelle.
+    Button press = next source.
 
-    Der Button kann abonniert sein ohne dass der Media Player läuft
-    (und damit ohne Poll-Loop). Deshalb holen wir uns hier den aktuell
-    laufenden Kanal notfalls frisch ab, statt uns auf den zuletzt
-    gepollten Zustand zu verlassen.
+    The button can be subscribed without the media player (and thus
+    without a poll loop). So we fetch the currently running channel
+    here if needed, instead of relying on the last polled state.
     """
     if cmd_id != button.Commands.PUSH:
         return StatusCodes.NOT_IMPLEMENTED
@@ -211,10 +210,10 @@ async def _button_cmd_handler(
 
 async def _resolve_current_channel(allow_refresh: bool) -> Optional[str]:
     """
-    Liefert die UUID des Kanals, der gerade auf unserer Client-IP läuft.
+    Returns the UUID of the channel currently playing on our client IP.
 
-    Normalerweise steht das aus dem letzten Poll bereit. Wenn nicht
-    (Button ohne Poll-Loop), holen wir den Status einmalig ab.
+    Usually this is known from the last poll. If not (button without
+    poll loop), we fetch the status once.
     """
     if _current_channel_uuid:
         return _current_channel_uuid
@@ -228,14 +227,14 @@ async def _switch_relative(
     offset: int, allow_refresh: bool = False
 ) -> StatusCodes:
     """
-    Quellenwechsel um +1 / -1 in der Kanal-Reihenfolge.
+    Switches the source by +1 / -1 in the channel order.
 
-    Vorwärts nutzt den Dispatcharr-Endpunkt next_stream - der macht die
-    Rotation inklusive Wrap-around serverseitig und kennt den aktuellen
-    Stream aus Redis, das ist robuster als unsere lokale Sicht.
+    Forward uses the Dispatcharr endpoint next_stream - it rotates
+    server-side including wrap-around and knows the current stream from
+    Redis, which is more robust than our local view.
 
-    Rückwärts gibt es keinen Endpunkt, also rechnen wir den Index selbst
-    aus und wechseln gezielt per change_stream.
+    There is no endpoint for backward, so we compute the index ourselves
+    and switch explicitly via change_stream.
     """
     channel_uuid = await _resolve_current_channel(allow_refresh)
     if not channel_uuid or client is None:
@@ -247,13 +246,13 @@ async def _switch_relative(
         if ok:
             await _refresh_after_switch()
             return StatusCodes.OK
-        # "No alternate streams available" ist kein Serverfehler,
-        # sondern schlicht: der Sender hat nur eine Quelle.
+        # "No alternate streams available" is not a server error, it
+        # simply means the channel has only one source.
         if "alternate" in msg.lower():
             return StatusCodes.NOT_FOUND
         return StatusCodes.SERVER_ERROR
 
-    # Rückwärts: Position in der Quellenliste selbst bestimmen
+    # Backward: determine the position in the source list ourselves
     sources = await _get_sources_cached(_current_channel_id)
     if not sources or len(sources) < 2:
         return StatusCodes.NOT_FOUND
@@ -279,7 +278,7 @@ async def _switch_relative(
 
 
 async def _switch_to_source_name(name: str) -> StatusCodes:
-    """SELECT_SOURCE: Anzeigename aus source_list zurück auf stream_id mappen."""
+    """SELECT_SOURCE: map a display name from source_list back to a stream_id."""
     channel_uuid = await _resolve_current_channel(allow_refresh=True)
     if not channel_uuid or client is None:
         return StatusCodes.SERVICE_UNAVAILABLE
@@ -304,11 +303,11 @@ async def _switch_to_source_name(name: str) -> StatusCodes:
 
 async def _refresh_after_switch() -> None:
     """
-    Nach einem Wechsel kurz warten und den Zustand neu holen.
+    Waits briefly after a switch and fetches the state again.
 
-    Dispatcharr bestätigt den Switch erst nachdem der neue Upstream
-    tatsächlich offen ist; ein sofortiger Poll würde noch die alte
-    stream_id aus Redis lesen.
+    Dispatcharr only confirms the switch once the new upstream is
+    actually open; an immediate poll would still read the old stream_id
+    from Redis.
     """
     await asyncio.sleep(1.5)
     try:
@@ -322,16 +321,16 @@ async def _refresh_after_switch() -> None:
 # ----------------------------------------------------------------------
 def _source_labels(sources: list[dict[str, Any]]) -> list[str]:
     """
-    Anzeigenamen für die Quellenliste.
+    Display names for the source list.
 
-    Aufbau: "<Priorität>. <Provider> - <Streamname>"
+    Format: "<priority>. <provider> - <stream name>"
 
-    Die Priorität steht vorne, weil sie die Failover-Reihenfolge zeigt
-    und die Labels garantiert eindeutig macht (Voraussetzung fürs
-    Rückmapping bei SELECT_SOURCE). Der Provider steht davor, weil die
-    Streamnamen verschiedener Provider für denselben Sender oft
-    komplett unterschiedlich lauten - der Provider ist das stabilere
-    Merkmal, an dem du die Quelle wiedererkennst.
+    The priority comes first because it shows the failover order and
+    guarantees unique labels (required for mapping back on
+    SELECT_SOURCE). The provider comes before the stream name because
+    different providers often name the same channel completely
+    differently - the provider is the more stable feature to recognize
+    a source by.
     """
     labels: list[str] = []
     for i, s in enumerate(sources):
@@ -358,7 +357,7 @@ def _source_labels(sources: list[dict[str, Any]]) -> list[str]:
 async def _get_sources_cached(
     channel_id: Optional[int],
 ) -> Optional[list[dict[str, Any]]]:
-    """Quellenliste eines Senders mit TTL-Cache (siehe _SOURCE_TTL_SECONDS)."""
+    """Source list of a channel with TTL cache (see _SOURCE_TTL_SECONDS)."""
     import time
 
     if channel_id is None or client is None:
@@ -371,7 +370,7 @@ async def _get_sources_cached(
 
     sources = await client.get_channel_streams(channel_id)
     if sources is None:
-        # Fehler: alten Cache behalten statt die Liste zu leeren
+        # Error: keep the old cache instead of clearing the list
         return cached[0] if cached else None
 
     _source_cache[channel_id] = (sources, now)
@@ -379,11 +378,11 @@ async def _get_sources_cached(
 
 
 def _parse_iso(ts: str) -> Optional[datetime]:
-    """Dispatcharr liefert UTC-Timestamps wie '2026-04-26T11:05:00Z'."""
+    """Dispatcharr returns UTC timestamps like '2026-04-26T11:05:00Z'."""
     if not ts:
         return None
     try:
-        # Python 3.11+ akzeptiert 'Z' direkt; für ältere Versionen ersetzen
+        # Python 3.11+ accepts 'Z' directly; replace it for older versions
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except Exception:
         return None
@@ -395,15 +394,15 @@ def _source_line(
     stream: dict[str, Any],
 ) -> str:
     """
-    Kurzform der aktiven Quelle für die Zeile unter dem Titel.
+    Short form of the active source for the line below the title.
 
-    Format: "<Streamname> · <Position>/<Gesamt> · <Provider>"
-    Beispiel: "RTL · 2/7 · TS4_proxy_AUS"
+    Format: "<stream name> · <position>/<total> · <provider>"
+    Example: "RTL · 2/7 · TS4_proxy_AUS"
 
-    Auf dem Display ist wenig Platz, deshalb bewusst kompakt. Teile,
-    die nicht bekannt sind, fallen weg statt als Platzhalter zu
-    erscheinen - so bleibt die Zeile bei dünner Datenlage kurz statt
-    mit Fragezeichen gefüllt.
+    Space on the display is limited, so this is deliberately compact.
+    Unknown parts are left out instead of showing placeholders - with
+    sparse data the line stays short instead of filled with question
+    marks.
     """
     parts: list[str] = []
 
@@ -416,14 +415,14 @@ def _source_line(
 
         if name:
             parts.append(name)
-        # Position auch bei nur einer Quelle zeigen ("1/1") - dann sieht
-        # man auf einen Blick, dass es keine Alternative gibt.
+        # Show the position even with a single source ("1/1") - that
+        # tells at a glance that there is no alternative.
         parts.append(f"{active_idx + 1}/{len(sources)}")
         if provider:
             parts.append(provider)
     else:
-        # Aktive stream_id nicht in der Liste (z.B. während eines
-        # Failovers) - wenigstens den Rohnamen aus dem Status zeigen.
+        # Active stream_id not in the list (e.g. during a failover) -
+        # at least show the raw name from the status.
         name = (stream.get("stream_name") or "").strip()
         if name:
             parts.append(name)
@@ -437,8 +436,8 @@ def _build_attrs_from_stream_and_program(
     program: Optional[dict[str, Any]],
     sources: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
-    """Mapt API-Daten auf Media Player Attribute."""
-    # Sender-Name: nur als Fallback wenn KEIN Logo da ist (sonst redundant)
+    """Maps API data to media player attributes."""
+    # Channel name: only as fallback when there is NO logo (redundant otherwise)
     has_logo = bool(channel_info and channel_info.get("logo_id") is not None and logo_proxy)
 
     if channel_info and channel_info.get("name"):
@@ -446,16 +445,16 @@ def _build_attrs_from_stream_and_program(
     else:
         channel_name = stream.get("stream_name") or "Unknown"
 
-    # Logo - via lokalem Proxy mit normalisierter Größe.
-    # Test-Mode: wenn Channel-Name "ruler" oder "widget_test" enthält,
-    # liefere das Original-Bild ohne Padding (zur Widget-Vermessung).
+    # Logo - via the local proxy with normalized size.
+    # Test mode: if the channel name contains "ruler" or "widget_test",
+    # serve the original image unprocessed (for measuring the widget).
     logo_url = ""
     if has_logo:
         cname_lower = (channel_info.get("name") or "").lower()
         raw = "ruler" in cname_lower or "widget_test" in cname_lower
         logo_url = logo_proxy.url_for(channel_info["logo_id"], raw=raw)
 
-    # Programm-Titel (title Zeile - Hauptanzeige)
+    # Program title (title line - main display)
     title = ""
     duration_s = 0
     position_s = 0
@@ -476,9 +475,9 @@ def _build_attrs_from_stream_and_program(
             duration_s = max(total, 0)
             position_s = max(0, min(elapsed, duration_s))
 
-    # Wenn kein Programm da: Sendername als Titel zeigen, kein Artist
-    # Wenn Programm + Logo da: Programm als Titel, KEIN Artist (Logo zeigt Sender schon)
-    # Wenn Programm da aber kein Logo: Programm als Titel, Sender als Artist
+    # No program: channel name as title, no artist
+    # Program + logo: program as title, NO artist (the logo shows the channel)
+    # Program but no logo: program as title, channel as artist
     if not title:
         title = channel_name
         artist = ""
@@ -487,10 +486,10 @@ def _build_attrs_from_stream_and_program(
     else:
         artist = channel_name
 
-    # Quellenliste + aktuell aktive Quelle.
-    # Die aktive Quelle wird über die stream_id aus dem Status-Poll
-    # bestimmt, nicht über den Namen - Namen sind bei mehreren Providern
-    # oft doppelt.
+    # Source list + currently active source.
+    # The active source is determined via the stream_id from the status
+    # poll, not via the name - names are often duplicated across
+    # providers.
     source_list: list[str] = []
     source = ""
     active_idx: Optional[int] = None
@@ -504,20 +503,20 @@ def _build_attrs_from_stream_and_program(
                     source = source_list[i]
                     break
         if not source:
-            # Quelle läuft, taucht aber nicht in der Liste auf
-            # (z.B. gerade entfernt) - Rohnamen aus dem Status zeigen
+            # Source is running but not in the list (e.g. just
+            # removed) - show the raw name from the status
             source = stream.get("stream_name") or ""
 
-    # Zeile unter dem Titel: welche Quelle gerade läuft. Das Feld war
-    # bisher leer, wenn ein Logo da ist (Sendername wäre dort neben dem
-    # Logo redundant) - genau dieser Platz wird jetzt genutzt.
+    # Line below the title: which source is currently running. This field
+    # used to be empty when there is a logo (the channel name would be
+    # redundant next to the logo) - that space is used for it now.
     source_line = _source_line(sources, active_idx, stream)
     if source_line:
         if has_logo:
             artist = source_line
         else:
-            # Ohne Logo trägt keine andere Stelle den Sendernamen, wenn
-            # oben ein Sendungstitel steht - dann beides zeigen.
+            # Without a logo nothing else shows the channel name when a
+            # program title is shown above - so show both.
             artist = f"{channel_name} · {source_line}" if artist else source_line
 
     return {
@@ -557,23 +556,23 @@ async def _push(attrs: dict[str, Any]) -> None:
     _LOG.debug("Pushed attrs: %s", attrs)
 
 
-# EPG-Cache: channel_uuid -> (program_dict, fetch_timestamp)
-# Vermeidet das alle-10s 200KB EPG-JSON Polling.
+# EPG cache: channel_uuid -> (program_dict, fetch_timestamp)
+# Avoids polling the 200KB EPG JSON every 10s.
 _epg_cache: dict[str, tuple[Optional[dict[str, Any]], float]] = {}
 _EPG_TTL_SECONDS = 60.0
 
 
 async def _get_program_cached(channel_uuid: str) -> Optional[dict[str, Any]]:
     """
-    Holt das EPG-Programm für einen Kanal, mit lokalem Cache.
+    Fetches the EPG program for a channel, with a local cache.
 
-    Cache wird invalidiert wenn:
-    1. Älter als _EPG_TTL_SECONDS (Standard 60s)
-    2. Das gecachte Programm laut seiner end_time bereits zu Ende ist
-       (das bedeutet: ein neues Programm ist gestartet)
+    The cache is invalidated when:
+    1. It is older than _EPG_TTL_SECONDS (default 60s)
+    2. The cached program has already ended according to its end_time
+       (which means a new program has started)
 
-    Spart bei kontinuierlichem Schauen Bandbreite, sorgt aber dafür
-    dass Programmwechsel erkannt werden.
+    Saves bandwidth while watching continuously, but still makes sure
+    program changes are detected.
     """
     import time
     from datetime import datetime, timezone
@@ -583,54 +582,54 @@ async def _get_program_cached(channel_uuid: str) -> Optional[dict[str, Any]]:
         prog, ts = cached
         cache_age = now - ts
 
-        # TTL-Check. Auch "kein Programm" (None) wird gecacht - sonst
-        # holt ein Sender ohne EPG bei jedem Poll die ~200KB Antwort neu.
+        # TTL check. "No program" (None) is cached as well - otherwise a
+        # channel without EPG re-fetches the ~200KB response on every poll.
         if cache_age < _EPG_TTL_SECONDS and prog is None:
             return None
         if cache_age < _EPG_TTL_SECONDS:
-            # Zusätzlich: end_time prüfen - wenn das Programm laut
-            # EPG schon vorbei ist, neu laden (Programmwechsel!)
+            # Also check end_time - if the program has already ended
+            # according to the EPG, reload (program change!)
             end_str = prog.get("end_time", "")
             if end_str:
                 try:
                     end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
                     now_utc = datetime.now(timezone.utc)
                     if now_utc < end_dt:
-                        # Programm läuft noch laut EPG -> Cache nutzen
+                        # Program still running according to EPG -> use cache
                         return prog
-                    # Sonst durchfallen -> Cache ist stale, neu holen
+                    # Otherwise fall through -> cache is stale, fetch again
                     _LOG.info(
                         "EPG cache for %s expired (program ended %s)",
                         channel_uuid, end_str,
                     )
                 except Exception:
-                    # Bei Parse-Fehler: Cache trotzdem nutzen
+                    # On parse errors: use the cache anyway
                     return prog
             else:
                 return prog
 
-    # Cache miss / abgelaufen: neu holen
+    # Cache miss / expired: fetch again
     prog = await client.get_current_program_for(channel_uuid)
     _epg_cache[channel_uuid] = (prog, now)
     return prog
 
 
 async def _poll_once() -> None:
-    """Ein Polling-Zyklus: Streams holen, filtern, Entity updaten."""
+    """One polling cycle: fetch streams, filter, update the entity."""
     if client is None:
         return
 
     streams = await client.get_active_streams()
 
-    # None = Netzwerk-/HTTP-Fehler, NICHT "keine Streams aktiv".
-    # Den letzten bekannten State behalten damit das Logo nicht
-    # plötzlich verschwindet wenn z.B. WLAN nach Wakeup noch nicht
-    # voll da ist oder Dispatcharr kurz nicht erreichbar.
+    # None = network/HTTP error, NOT "no active streams".
+    # Keep the last known state so the logo doesn't suddenly disappear,
+    # e.g. when Wi-Fi is not fully up after wakeup or Dispatcharr is
+    # briefly unreachable.
     if streams is None:
         _LOG.debug("Streams unavailable (network error?), keeping last state")
         return
 
-    # Stream finden, der zu unserer Client-IP gehört
+    # Find the stream that belongs to our client IP
     matching: Optional[dict[str, Any]] = None
     for stream in streams:
         clients_list = stream.get("clients", []) or []
@@ -653,29 +652,29 @@ async def _poll_once() -> None:
     channel_uuid = matching.get("channel_id")
     channel_info = client.get_channel_info(channel_uuid) if channel_uuid else None
 
-    # Wenn unbekannt: Cache evtl stale -> Refresh anstoßen
+    # If unknown: cache may be stale -> trigger a refresh
     if channel_uuid and channel_info is None:
         _LOG.info("Unknown channel uuid %s, refreshing cache", channel_uuid)
         await client.refresh_channel_cache()
         channel_info = client.get_channel_info(channel_uuid)
 
-    # Aktuellen Kanal/Quelle merken - darauf beziehen sich alle
-    # Wechsel-Kommandos.
+    # Remember the current channel/source - all switch commands refer
+    # to it.
     _current_channel_uuid = channel_uuid
     _current_channel_id = channel_info.get("id") if channel_info else None
     raw_stream_id = matching.get("stream_id")
     _current_stream_id = int(raw_stream_id) if raw_stream_id is not None else None
 
-    # EPG aus Cache (60s TTL) statt jedes Mal die ~200KB EPG-Antwort
-    # von Dispatcharr zu holen
+    # EPG from the cache (60s TTL) instead of fetching the ~200KB EPG
+    # response from Dispatcharr every time
     program = (
         await _get_program_cached(channel_uuid)
         if channel_uuid
         else None
     )
 
-    # Quellenliste aus Cache (10min TTL) - nur ein Request pro Sender,
-    # nicht pro Poll.
+    # Source list from the cache (10min TTL) - one request per channel,
+    # not per poll.
     sources = await _get_sources_cached(_current_channel_id)
 
     attrs = _build_attrs_from_stream_and_program(
@@ -686,15 +685,15 @@ async def _poll_once() -> None:
 
 async def _poll_loop() -> None:
     """
-    Endlos pollen alle cfg.poll_interval Sekunden.
+    Polls endlessly every cfg.poll_interval seconds.
 
-    Respektiert _active_event - bei Standby wird der Loop pausiert
-    und nimmt erst wieder Fahrt auf wenn das Event gesetzt wird.
+    Respects _active_event - in standby the loop is paused and only
+    resumes once the event is set again.
     """
     _LOG.info("Poll loop started (every %ds)", cfg.poll_interval)
     while True:
         try:
-            # Bei Standby: warten bis EXIT_STANDBY den Event wieder setzt
+            # In standby: wait until EXIT_STANDBY sets the event again
             if _active_event is not None:
                 await _active_event.wait()
             await _poll_once()
@@ -709,7 +708,7 @@ async def _poll_loop() -> None:
 
 
 async def _cache_refresh_loop() -> None:
-    """Periodisch Channel/Logo-Cache neu laden (Logos können sich ändern)."""
+    """Periodically reloads the channel/logo cache (logos can change)."""
     _LOG.info(
         "Cache refresh loop started (every %ds)", cfg.cache_refresh_interval
     )
@@ -729,8 +728,8 @@ async def _cache_refresh_loop() -> None:
 # ----------------------------------------------------------------------
 async def _start_runtime() -> bool:
     """
-    Initialisiert den Dispatcharr-Client und startet die Polling-Tasks.
-    Wird bei CONNECT und nach erfolgreichem Setup aufgerufen.
+    Initializes the Dispatcharr client and starts the polling tasks.
+    Called on subscribe, on exit_standby and after a successful setup.
     """
     global client, logo_proxy, _poll_task, _cache_task
 
@@ -739,20 +738,20 @@ async def _start_runtime() -> bool:
         await api.set_device_state(DeviceStates.ERROR)
         return False
 
-    # Vorherige Tasks aufräumen falls vorhanden
+    # Clean up previous tasks, if any
     await _stop_runtime()
 
     client = DispatcharrClient(cfg.url, cfg.api_key)
 
-    # Initial cache laden - mit Backoff-Retry.
+    # Load the initial cache - with backoff retry.
     #
-    # On-device laeuft _start_runtime() direkt auf das EXIT_STANDBY-Event,
-    # und die Remote baut ihr WLAN erst danach wieder auf. Der erste
-    # Request scheitert dann reproduzierbar mit "Network is unreachable".
-    # Ein einzelner Versuch wuerde die Integration in ERROR nageln, ohne
-    # dass jemals wieder ein Versuch folgt.
+    # On-device, _start_runtime() runs right on the EXIT_STANDBY event,
+    # and the remote only re-establishes its Wi-Fi afterwards. The first
+    # request then reliably fails with "Network is unreachable". A single
+    # attempt would leave the integration stuck in ERROR without any
+    # further attempt.
     #
-    # 2s + 4s + 6s + 8s = max. 20s Wartezeit ueber 5 Versuche.
+    # 2s + 4s + 6s + 8s = at most 20s of waiting across 5 attempts.
     cache_ok = False
     for attempt in range(5):
         try:
@@ -788,16 +787,16 @@ async def _start_runtime() -> bool:
         await api.set_device_state(DeviceStates.ERROR)
         return False
 
-    # Logo proxy starten - liefert quadratisch-gepaddete Logos für die Remote
+    # Start the logo proxy - serves processed logos to the remote
     logo_proxy = LogoProxy(cfg.url, port=cfg.logo_proxy_port)
     try:
         await logo_proxy.start()
     except Exception as exc:
         _LOG.error("Logo proxy failed to start: %s", exc)
-        # Nicht fatal - wir laufen ohne Logos weiter
+        # Not fatal - we continue without logos
         logo_proxy = None
 
-    # Standby-Event initialisieren (gesetzt = aktiv, clear = pausiert)
+    # Initialize the standby event (set = active, cleared = paused)
     global _active_event
     _active_event = asyncio.Event()
     _active_event.set()
@@ -811,12 +810,11 @@ async def _start_runtime() -> bool:
 
 def _sync_poll_task() -> None:
     """
-    Startet/stoppt den Poll-Loop passend zur Media-Player-Subscription.
+    Starts/stops the poll loop according to the media player subscription.
 
-    Der Button allein braucht kein Polling - der holt den aktuellen
-    Kanal beim Druck ab. Nur das Widget muss laufend aktualisiert
-    werden. Damit kostet ein Button auf einer UI-Page keinen einzigen
-    zusätzlichen Request im Leerlauf.
+    The button alone needs no polling - it fetches the current channel
+    when pressed. Only the widget has to be updated continuously. So a
+    button on a UI page costs not a single extra request while idle.
     """
     global _poll_task
 
@@ -845,8 +843,8 @@ async def _stop_runtime() -> None:
     _cache_task = None
     _active_event = None
     _epg_cache = {}
-    # Quellen-State verwerfen: nach einem Neustart der Runtime kann
-    # längst ein anderer Sender laufen.
+    # Discard the source state: after a runtime restart a different
+    # channel may be playing by now.
     global _current_channel_uuid, _current_channel_id, _current_stream_id
     _current_channel_uuid = None
     _current_channel_id = None
@@ -867,15 +865,14 @@ async def _stop_runtime() -> None:
 @api.listens_to(Events.CONNECT)
 async def on_connect() -> None:
     """
-    Remote stellt WebSocket-Verbindung zum Driver her.
+    The remote establishes the WebSocket connection to the driver.
 
-    Wichtig: Wir starten hier NICHT die Runtime. Das macht der
-    SUBSCRIBE_ENTITIES Handler erst wenn die Remote tatsächlich
-    auf eine Entity zugreifen will.
+    Important: we do NOT start the runtime here. The SUBSCRIBE_ENTITIES
+    handler does that once the remote actually wants to use an entity.
 
-    So pollen wir Dispatcharr nur dann wenn das Widget irgendwo
-    sichtbar ist - in anderen Activities tun wir nichts. Kodi
-    folgt demselben Pattern (device.connect() in SUBSCRIBE).
+    This way we only poll Dispatcharr while the widget is visible
+    somewhere - in other activities we do nothing. The Kodi integration
+    follows the same pattern (device.connect() in SUBSCRIBE).
     """
     _LOG.info("Remote connected")
     if cfg.is_configured():
@@ -887,7 +884,7 @@ async def on_connect() -> None:
 @api.listens_to(Events.DISCONNECT)
 async def on_disconnect() -> None:
     _LOG.info("Remote disconnected")
-    # Anders als bei Standby ist die Subscription hier tatsächlich weg.
+    # Unlike in standby, the subscription is really gone here.
     _subscribed.clear()
     await _stop_runtime()
 
@@ -895,16 +892,16 @@ async def on_disconnect() -> None:
 @api.listens_to(Events.ENTER_STANDBY)
 async def on_enter_standby() -> None:
     """
-    Remote geht in Standby - Display aus, WLAN ggf. Power-Managed.
+    The remote goes into standby - display off, Wi-Fi possibly power
+    managed.
 
-    Laut UC-Doku: "the WebSocket connection might get disconnected
-    during remote standby!" - daher offizielles Pattern aus dem
-    Home-Assistant Integration Issue #50: komplett vom Backend
-    trennen, beim EXIT_STANDBY wieder hochfahren.
+    According to the UC docs: "the WebSocket connection might get
+    disconnected during remote standby!" - hence the official pattern
+    from Home Assistant integration issue #50: disconnect from the
+    backend completely and start again on EXIT_STANDBY.
 
-    Das stoppt das Polling von Dispatcharr während die Remote schläft.
-    Sonst würde der externe Container munter weiter pollen obwohl
-    niemand die Daten braucht.
+    This stops polling Dispatcharr while the remote sleeps, when nobody
+    needs the data.
     """
     _LOG.info("Remote entering standby - stopping runtime")
     await _stop_runtime()
@@ -913,17 +910,17 @@ async def on_enter_standby() -> None:
 @api.listens_to(Events.EXIT_STANDBY)
 async def on_exit_standby() -> None:
     """
-    Remote ist wieder aktiv - Runtime komplett hochfahren.
+    The remote is active again - start the runtime completely.
 
-    Laut Sequenzdiagramm der UC-Doku ruft die Remote nach exit_standby
-    typischerweise get_device_state und get_entity_states auf.
-    Unser _start_runtime() setzt device_state=CONNECTED und der erste
-    Poll-Zyklus liefert die entity_states.
+    According to the sequence diagram in the UC docs, the remote usually
+    calls get_device_state and get_entity_states after exit_standby.
+    Our _start_runtime() sets device_state=CONNECTED and the first poll
+    cycle provides the entity states.
     """
     if not _subscribed:
-        # Nichts abonniert (z.B. andere Activity aktiv) - dann braucht
-        # auch niemand Senderliste, Logo-Proxy oder Cache-Loop.
-        # on_subscribe startet die Runtime, sobald sie gebraucht wird.
+        # Nothing subscribed (e.g. another activity is active) - then
+        # nobody needs the channel list, logo proxy or cache loop either.
+        # on_subscribe starts the runtime as soon as it is needed.
         _LOG.info("Remote exiting standby - no subscribed entities, staying idle")
         return
     _LOG.info("Remote exiting standby - starting runtime")
@@ -932,30 +929,30 @@ async def on_exit_standby() -> None:
 
 
 async def _immediate_refresh_with_retry() -> None:
-    """Versucht bis zu 3x das Widget mit aktuellem State zu befüllen."""
+    """Tries up to 3 times to fill the widget with the current state."""
     for attempt in range(3):
         try:
             await _poll_once()
-            _LOG.info("Wakeup-Refresh erfolgreich (attempt %d)", attempt + 1)
+            _LOG.info("Wakeup refresh successful (attempt %d)", attempt + 1)
             return
         except Exception as exc:
             _LOG.warning(
                 "Wakeup-Refresh attempt %d failed: %s", attempt + 1, exc
             )
-        # 2s, 4s, 8s zwischen Versuchen (Backoff)
+        # 2s, 4s, 6s between attempts (backoff)
         await asyncio.sleep(2 * (attempt + 1))
-    _LOG.warning("Wakeup-Refresh: alle Versuche fehlgeschlagen")
+    _LOG.warning("Wakeup refresh: all attempts failed")
 
 
 @api.listens_to(Events.SUBSCRIBE_ENTITIES)
 async def on_subscribe(entity_ids: list[str]) -> None:
     """
-    Remote subscribed eine Entity - das Widget ist sichtbar oder
-    wird sichtbar. Kodi-Pattern: stelle sicher dass die Runtime
-    läuft (Backend-Verbindung steht), damit Daten geliefert werden.
+    The remote subscribes an entity - the widget is or becomes visible.
+    Kodi pattern: make sure the runtime is running (backend connection
+    established) so data is delivered.
 
-    Wenn die Runtime schon läuft (z.B. weil eine andere Activity
-    auch die Dispatcharr-Entity benutzt), ist das ein No-Op.
+    If the runtime is already running (e.g. because another activity
+    also uses the Dispatcharr entity), this is a no-op.
     """
     _LOG.info("Subscribe: %s", entity_ids)
     ours = {e for e in entity_ids if e in (ENTITY_ID, BUTTON_ID)}
@@ -964,18 +961,18 @@ async def on_subscribe(entity_ids: list[str]) -> None:
 
     _subscribed.update(ours)
 
-    # Runtime starten falls noch nicht aktiv (Kodi macht es genauso
-    # mit device.connect() pro Device)
+    # Start the runtime if not active yet (Kodi does the same with
+    # device.connect() per device)
     if client is None and cfg.is_configured():
         _LOG.info("Subscribe triggered runtime start")
         await _start_runtime()
         return
 
-    # Runtime läuft schon - Poll-Loop an die neue Subscription anpassen
+    # Runtime already running - adapt the poll loop to the new subscription
     _sync_poll_task()
 
-    # Sofort einen Poll machen damit die Remote nicht 10s leer wartet
-    # bis zum nächsten regulären Zyklus
+    # Poll right away so the remote doesn't wait empty for 10s until
+    # the next regular cycle
     if client and ENTITY_ID in ours:
         try:
             await _poll_once()
@@ -986,17 +983,17 @@ async def on_subscribe(entity_ids: list[str]) -> None:
 @api.listens_to(Events.UNSUBSCRIBE_ENTITIES)
 async def on_unsubscribe(entity_ids: list[str]) -> None:
     """
-    Remote unsubscribed eine Entity - das Widget ist nicht mehr
-    sichtbar (z.B. Activity-Wechsel weg von TV). Kodi-Pattern:
-    wenn keine anderen Entities mehr abonniert sind die das gleiche
-    Device brauchen, Runtime stoppen.
+    The remote unsubscribes an entity - the widget is no longer visible
+    (e.g. switching from the TV activity to another one). Kodi pattern:
+    stop the runtime when no other entity needing the same device is
+    subscribed.
 
-    Ist nur der Button weg, läuft die Runtime weiter; ist nur das
-    Widget weg, stoppt nur der Poll-Loop. Erst wenn keine unserer
-    Entities mehr abonniert ist, wird die Runtime komplett gestoppt.
+    If only the button is gone, the runtime keeps running; if only the
+    widget is gone, only the poll loop stops. The runtime is stopped
+    completely once none of our entities is subscribed anymore.
 
-    Das ist der eigentliche Akku-Spar-Mechanismus: in der Kodi-
-    oder anderen Activity läuft KEIN Polling von Dispatcharr.
+    This is the actual battery saving mechanism: in the Kodi or any
+    other activity there is NO polling of Dispatcharr.
     """
     _LOG.info("Unsubscribe: %s", entity_ids)
     ours = {e for e in entity_ids if e in (ENTITY_ID, BUTTON_ID)}
@@ -1006,8 +1003,8 @@ async def on_unsubscribe(entity_ids: list[str]) -> None:
     _subscribed.difference_update(ours)
 
     if _subscribed:
-        # Noch mindestens eine Entity aktiv - nur den Poll-Loop
-        # nachziehen (z.B. Widget weg, Button bleibt).
+        # At least one entity still active - only adjust the poll loop
+        # (e.g. widget gone, button stays).
         _sync_poll_task()
         return
 
@@ -1020,9 +1017,9 @@ async def on_unsubscribe(entity_ids: list[str]) -> None:
 # ----------------------------------------------------------------------
 async def setup_handler(msg: SetupDriver) -> SetupAction:
     """
-    Wird von der Remote beim ersten Setup und bei Re-Configure aufgerufen.
-    Wir nehmen die Werte aus dem Setup-Form, validieren sie gegen die
-    Dispatcharr API und persistieren sie.
+    Called by the remote on the initial setup and on reconfigure.
+    Takes the values from the setup form, validates them against the
+    Dispatcharr API and persists them.
     """
     if isinstance(msg, DriverSetupRequest):
         return await _handle_setup(msg.setup_data)
@@ -1040,7 +1037,7 @@ async def _handle_setup(data: dict[str, str]) -> SetupAction:
     except (TypeError, ValueError):
         _LOG.error("Setup: invalid poll interval %r", data.get("poll_interval"))
         return SetupError(error_type=IntegrationSetupError.OTHER)
-    # Gleiche Grenzen wie im setup_data_schema (driver.json)
+    # Same limits as in the setup_data_schema (driver.json)
     poll_interval = max(5, min(60, poll_interval))
 
     new = DriverConfig(
@@ -1079,16 +1076,16 @@ async def _handle_setup(data: dict[str, str]) -> SetupAction:
 # Main
 # ----------------------------------------------------------------------
 async def main() -> None:
-    # Entities registrieren - immer beim Start aus der lokalen Config,
-    # unabhängig von der Erreichbarkeit von Dispatcharr. Sonst kann der
-    # Core abonnieren bevor die Entities existieren.
+    # Register entities - always at startup, independent of whether
+    # Dispatcharr is reachable. Otherwise the core could subscribe
+    # before the entities exist.
     api.available_entities.add(_make_entity())
     api.available_entities.add(_make_button())
 
-    # API starten
+    # Start the API
     driver_path = os.path.join(os.path.dirname(__file__), "driver.json")
     if not os.path.isfile(driver_path):
-        # In gepackter Form liegt driver.json in ./bin/ neben driver
+        # In the packaged form, driver.json is in ./bin/ next to driver
         driver_path = os.path.join(os.getcwd(), "driver.json")
     await api.init(driver_path, setup_handler)
 

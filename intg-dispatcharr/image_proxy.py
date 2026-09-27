@@ -1,20 +1,20 @@
 """
-Image Proxy - lädt Logos von Dispatcharr, normalisiert sie auf eine
-feste Canvas und serviert sie für die UC Remote.
+Image proxy - loads logos from Dispatcharr, normalizes them to a fixed
+canvas and serves them to the UC remote.
 
-Hintergrund: Dispatcharr-Logos sind 512px breit, aber Höhe stark variabel
-(66px bis 513px), und viele bringen eigenen leeren Rand mit. Direkt ins
-Media Widget gegeben, erscheinen sie dadurch unterschiedlich groß und
-oft winzig.
+Background: Dispatcharr logos are 512px wide, but their height varies a
+lot (66px to 513px), and many come with their own empty border. Passed
+directly to the media widget, they appear in different sizes and are
+often tiny.
 
-Lösung pro Logo:
-1. Leeren Rand abschneiden (transparent oder einfarbig).
-2. Proportional in die Canvas einpassen - mit getrennten Rändern für
-   Breite und Höhe, weil das Widget nur seitlich abschneidet.
-3. Mittig auf transparenten Hintergrund setzen.
+Per logo:
+1. Trim empty borders (transparent or solid color).
+2. Scale proportionally into the canvas - with separate margins for
+   width and height, because the widget only crops at the sides.
+3. Center it on a transparent background.
 
-Cache: PNG-Bytes pro logo_id im RAM, max. MAX_CACHE_ENTRIES Einträge,
-damit wir nicht Out-Of-Memory laufen (UC Sandbox: ~100MB Limit pro Driver).
+Cache: PNG bytes per logo_id in RAM, at most MAX_CACHE_ENTRIES entries,
+so we don't run out of memory (UC sandbox: ~100MB limit per driver).
 """
 
 import asyncio
@@ -29,33 +29,33 @@ from PIL import Image, ImageChops
 
 _LOG = logging.getLogger(__name__)
 
-# Canvas: 512x128 (4:1) wie v0.6.1 - hat dem User am besten gefallen.
+# Canvas: 512x128 (4:1) as in v0.6.1 - looked best on the remote.
 TARGET_W = 512
 TARGET_H = 128
-# Nutzbarer Anteil der Canvas, getrennt nach Richtung.
-# Breite: lange Logos (Eurosport 512x52) wurden im Widget seitlich
-# abgeschnitten, deshalb 75% (64px Rand links/rechts).
-# Höhe: oben/unten wurde nie abgeschnitten. Früher galten dort
-# ebenfalls 75% - damit bekam ein quadratisches Logo nur 96x96px.
-# Mit 94% sind es 120x120px, gut 50% mehr Fläche.
+# Usable share of the canvas, per direction.
+# Width: long logos (Eurosport 512x52) were cropped at the sides of the
+# widget, hence 75% (64px margin left/right).
+# Height: nothing was ever cropped at the top/bottom. It used to be 75%
+# as well, which gave a square logo only 96x96px. With 94% it gets
+# 120x120px, about 50% more area.
 MAX_W_RATIO = 0.75
 MAX_H_RATIO = 0.94
-# Pixel mit Alpha <= diesem Wert zählen beim Zuschneiden als leer
-# (fängt Anti-Aliasing-Reste und fast unsichtbare Schatten ab).
+# Pixels with alpha <= this value count as empty when trimming
+# (catches anti-aliasing leftovers and nearly invisible shadows).
 TRIM_ALPHA_THRESHOLD = 16
-# Farbabstand, bis zu dem ein opaker Rand als "Hintergrund" gilt
-# (JPEG-Artefakte an weißen Rändern).
+# Color distance up to which an opaque border counts as "background"
+# (JPEG artifacts on white borders).
 TRIM_COLOR_TOLERANCE = 24
-# Wird in die Logo-URL geschrieben. Bei jeder Änderung an der
-# Bildaufbereitung erhöhen, sonst zeigt die Remote wegen
-# Cache-Control max-age bis zu 24h die alte Version.
+# Written into the logo URL. Bump it on every change to the image
+# processing, otherwise the remote keeps showing the old version for up
+# to 24h because of Cache-Control max-age.
 RENDER_VERSION = 2
 MAX_CACHE_ENTRIES = 200
 MAX_FETCH_TIMEOUT = 5.0
 
 
 class LogoProxy:
-    """Lokaler HTTP-Server der gepaddete Logos ausliefert."""
+    """Local HTTP server that serves the processed logos."""
 
     def __init__(self, dispatcharr_base_url: str, port: int = 19191):
         self._base = dispatcharr_base_url.rstrip("/")
@@ -71,9 +71,9 @@ class LogoProxy:
     @staticmethod
     def _detect_local_ip() -> str:
         """
-        Findet die IP des Interface, über das wir das LAN erreichen.
-        Trick: UDP socket "verbinden" zu einer öffentlichen Adresse - das
-        verschickt nichts, aber Linux setzt das Outbound-Interface.
+        Finds the IP of the interface we use to reach the LAN.
+        Trick: "connect" a UDP socket to a public address - this sends
+        nothing, but Linux selects the outbound interface.
         """
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -84,14 +84,14 @@ class LogoProxy:
 
     @property
     def public_url_base(self) -> str:
-        """Basis-URL die in media_image_url gesetzt wird."""
+        """Base URL used in media_image_url."""
         ip = self._public_ip or self._detect_local_ip()
         return f"http://{ip}:{self._port}"
 
     def url_for(self, logo_id: Optional[int], raw: bool = False) -> str:
         """
-        raw=True: Original ohne Aufbereitung (Test-Mode zur
-        Widget-Vermessung).
+        raw=True: original image without processing (test mode for
+        measuring the widget).
         """
         if logo_id is None:
             return ""
@@ -106,15 +106,14 @@ class LogoProxy:
     @staticmethod
     def _trim(src: Image.Image) -> Image.Image:
         """
-        Schneidet leeren Rand ab, damit das eigentliche Logo die
-        verfügbare Fläche nutzt.
+        Trims empty borders so the actual logo uses the available area.
 
-        - Mit Transparenz: alles außerhalb der sichtbaren Pixel.
-        - Ohne Transparenz: ein einfarbiger Rand, sofern alle vier
-          Ecken dieselbe Farbe haben (typisch: Logo auf weißer Fläche).
-          Die Fläche selbst bleibt erhalten, nur der Überstand geht weg.
+        - With transparency: everything outside the visible pixels.
+        - Without transparency: a solid-color border, provided all four
+          corners have the same color (typically a logo on a white area).
+          The area itself is kept, only the excess is removed.
 
-        Findet sich nichts Sinnvolles, kommt das Bild unverändert zurück.
+        If nothing sensible is found, the image is returned unchanged.
         """
         alpha = src.getchannel("A")
         if alpha.getextrema()[0] < 255:
@@ -141,7 +140,7 @@ class LogoProxy:
         if not bbox:
             return src
         left, top, right, bottom = bbox
-        # Winzige Reste (einzelne Pixel) nicht als Logo werten
+        # Don't treat tiny leftovers (single pixels) as a logo
         if right - left < 4 or bottom - top < 4:
             return src
         return src.crop(bbox)
@@ -149,11 +148,11 @@ class LogoProxy:
     @staticmethod
     def _pad_to_canvas(raw: bytes, passthrough: bool = False) -> bytes:
         """
-        Logo zuschneiden und in die TARGET_W x TARGET_H Canvas (512x128)
-        einpassen. Genutzt werden max. MAX_W_RATIO der Breite und
-        MAX_H_RATIO der Höhe, der Rest ist transparente Margin.
+        Trims the logo and fits it into the TARGET_W x TARGET_H canvas
+        (512x128). At most MAX_W_RATIO of the width and MAX_H_RATIO of the
+        height are used, the rest is a transparent margin.
 
-        passthrough=True: Original-PNG unverändert zurück (für Tests).
+        passthrough=True: returns the original PNG unchanged (for tests).
         """
         if passthrough:
             return raw
@@ -165,7 +164,7 @@ class LogoProxy:
         avail_w = int(TARGET_W * MAX_W_RATIO)
         avail_h = int(TARGET_H * MAX_H_RATIO)
 
-        # fit-contain: skaliere proportional in die avail-Box
+        # fit-contain: scale proportionally into the available box
         scale = min(avail_w / w, avail_h / h)
         new_w = max(1, int(round(w * scale)))
         new_h = max(1, int(round(h * scale)))
@@ -173,7 +172,7 @@ class LogoProxy:
         if (new_w, new_h) != (w, h):
             src = src.resize((new_w, new_h), Image.LANCZOS)
 
-        # Logo mittig in den vollen Canvas (transparente Margin rundum)
+        # Center the logo on the full canvas (transparent margin around it)
         canvas = Image.new("RGBA", (TARGET_W, TARGET_H), (0, 0, 0, 0))
         x = (TARGET_W - new_w) // 2
         y = (TARGET_H - new_h) // 2
@@ -184,18 +183,18 @@ class LogoProxy:
         return out.getvalue()
 
     async def _fetch_and_pad(self, logo_id: int, passthrough: bool = False) -> Optional[bytes]:
-        """Lädt Original von Dispatcharr und padded. Cached das Ergebnis.
+        """Loads the original from Dispatcharr and processes it. Caches the result.
 
-        passthrough=True: gibt das Original-PNG ohne Verarbeitung zurück
-        und cached unter einem separaten Slot.
+        passthrough=True: returns the original PNG without processing and
+        caches it in a separate slot.
         """
         cache_key = (logo_id, passthrough)
-        # Cache-Hit Fast-Path
+        # Cache hit fast path
         cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
 
-        # Prevent concurrent fetches der gleichen logo_id
+        # Prevent concurrent fetches of the same logo_id
         lock = self._fetch_locks.setdefault(cache_key, asyncio.Lock())
         async with lock:
             cached = self._cache.get(cache_key)
@@ -218,15 +217,15 @@ class LogoProxy:
                 _LOG.warning("Logo %s fetch failed: %s", logo_id, exc)
                 return None
 
-            # CPU-bound Pillow Arbeit in Thread auslagern damit der
-            # Event-Loop nicht blockiert
+            # Move CPU-bound Pillow work to a thread so the event loop
+            # is not blocked
             try:
                 padded = await asyncio.to_thread(self._pad_to_canvas, raw, passthrough)
             except Exception as exc:
                 _LOG.warning("Logo %s padding failed: %s", logo_id, exc)
                 return None
 
-            # Simple LRU-ish: wenn voll, ältesten Eintrag droppen
+            # Simple LRU-ish: when full, drop the oldest entry
             if len(self._cache) >= MAX_CACHE_ENTRIES:
                 first_key = next(iter(self._cache))
                 self._cache.pop(first_key, None)
@@ -248,7 +247,7 @@ class LogoProxy:
         except (KeyError, ValueError):
             return web.Response(status=400, text="bad logo_id")
 
-        # Test-Mode: ?raw=1 gibt das Original-PNG durch ohne Padding
+        # Test mode: ?raw=1 passes the original PNG through unprocessed
         passthrough = request.query.get("raw") == "1"
         png = await self._fetch_and_pad(logo_id, passthrough=passthrough)
         if png is None:
@@ -285,7 +284,7 @@ class LogoProxy:
 
         self._runner = web.AppRunner(self._app, access_log=None)
         await self._runner.setup()
-        # 0.0.0.0 binden damit die Remote (anderes Interface) drauf zugreifen kann
+        # Bind to 0.0.0.0 so the remote UI (other interface) can reach it
         self._site = web.TCPSite(self._runner, "0.0.0.0", self._port)
         await self._site.start()
         _LOG.info(
@@ -306,7 +305,7 @@ class LogoProxy:
         _LOG.info("Logo proxy stopped")
 
     def update_base_url(self, new_base: str) -> None:
-        """Wird aufgerufen wenn die Dispatcharr URL sich ändert (Reconfigure)."""
+        """Called when the Dispatcharr URL changes (reconfigure)."""
         new_base = new_base.rstrip("/")
         if new_base != self._base:
             _LOG.info("Dispatcharr base URL changed, clearing logo cache")

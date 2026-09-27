@@ -9,7 +9,7 @@
   "icon": "uc:tv",
   "description": {
     "en": "Shows the currently playing IPTV channel from Dispatcharr (filtered by client IP). Media Player widget with channel logo, current EPG program info and stream source switching. Runs natively on the remote.",
-    "de": "Zeigt den aktuell laufenden IPTV-Sender von Dispatcharr (gefiltert nach Client-IP). Media-Player-Widget mit Senderlogo, aktuellem EPG-Programm und Stream-Quellenwechsel. Laeuft nativ auf der Remote."
+    "de": "Zeigt den aktuell laufenden IPTV-Sender von Dispatcharr (gefiltert nach Client-IP). Media-Player-Widget mit Senderlogo, aktuellem EPG-Programm und Stream-Quellenwechsel. Läuft nativ auf der Remote."
   },
   "developer": {
     "name": "FoxTraill",

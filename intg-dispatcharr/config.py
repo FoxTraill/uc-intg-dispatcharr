@@ -1,8 +1,8 @@
 """
-Persistente Konfiguration des Drivers.
+Persistent driver configuration.
 
-Wird in $UC_CONFIG_HOME/config.json gespeichert (UC sandbox stellt
-diesen Pfad bereit; nur dieses Verzeichnis ist persistent writeable).
+Stored in $UC_CONFIG_HOME/config.json (provided by the UC sandbox; only
+this directory is writable and persisted).
 """
 
 import json
@@ -21,9 +21,9 @@ class DriverConfig:
     api_key: str = ""
     client_ip: str = ""
     poll_interval: int = 10
-    # Channel cache wird alle X Sekunden neu geladen
+    # Channel cache is reloaded every X seconds
     cache_refresh_interval: int = 21600  # 6h
-    # Lokaler HTTP-Port für den Logo-Proxy. UC verbietet 8000-9200 und 13333.
+    # Local HTTP port of the logo proxy. UC reserves 8000-9200 and 13333.
     logo_proxy_port: int = 19191
 
     def is_configured(self) -> bool:
@@ -32,8 +32,8 @@ class DriverConfig:
 
 def _config_path() -> Path:
     """
-    UC_CONFIG_HOME ist von der UC-Sandbox vorgegeben. Lokal/zum Testen
-    fallback auf ~/.config/uc-intg-dispatcharr.
+    UC_CONFIG_HOME is provided by the UC sandbox. For local testing,
+    falls back to $HOME (or /tmp).
     """
     base = os.environ.get("UC_CONFIG_HOME") or os.environ.get("HOME") or "/tmp"
     p = Path(base)

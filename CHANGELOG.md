@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - README rewritten in English; build and release details moved to
   `docs/development.md`, changelog moved to this file.
+- Code comments, docstrings, log messages and build output translated to
+  English.
+- GitHub Actions updated to Node.js 24 based versions (removes the Node.js 20
+  deprecation warning).
 
 ## [0.8.4] - 2026-09-27
 
