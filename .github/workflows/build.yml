@@ -1,0 +1,76 @@
+# Baut das aarch64-Installationsarchiv fuer die Remote und erstellt bei
+# einem Versions-Tag (z.B. v0.8.4) automatisch ein GitHub-Release.
+#
+# Release erstellen:
+#   1. Version in driver.json erhoehen (und Changelog im README)
+#   2. auf main mergen
+#   3. Tag setzen: git tag v0.8.4 && git push origin v0.8.4
+#      (oder auf GitHub: Releases -> Draft a new release -> neuer Tag)
+name: Build & Release
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    # Privates Repo: die kostenlosen ARM-Runner gibt es nur fuer
+    # oeffentliche Repos, deshalb x86 + QEMU-Emulation fuer arm64.
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (arm64)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Verify driver.json version matches tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          DRIVER_VERSION="v$(jq -r .version driver.json)"
+          if [ "${GITHUB_REF_NAME}" != "${DRIVER_VERSION}" ]; then
+            echo "Version in driver.json (${DRIVER_VERSION}) passt nicht zum Tag (${GITHUB_REF_NAME})!"
+            exit 1
+          fi
+
+      - name: Build
+        run: bash build.sh
+
+      - name: Checksum
+        run: |
+          ARCHIVE=$(ls uc-intg-dispatcharr-*-aarch64.tar.gz)
+          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+          ls -lah "$ARCHIVE"
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256

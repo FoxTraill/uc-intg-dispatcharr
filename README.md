@@ -37,6 +37,24 @@ Der Build läuft im offiziellen `unfoldedcircle/r2-pyinstaller:3.11.13`-Image
 unter `--platform=linux/arm64`. Auf Apple Silicon ist das nativ und schnell,
 das Image wird beim ersten Lauf gezogen.
 
+## Release über GitHub
+
+Das Archiv baut GitHub automatisch (`.github/workflows/build.yml`):
+
+- **Pull Request** → Testbuild, das Archiv hängt unter *Actions* am Lauf.
+- **Versions-Tag** → Build plus Release mit `.tar.gz` und SHA256.
+
+Neue Version veröffentlichen:
+
+1. `version` in `driver.json` erhöhen, Changelog unten ergänzen.
+2. Auf `main` mergen.
+3. Auf GitHub: *Releases → Draft a new release → Choose a tag* →
+   `v<version>` eintippen (z.B. `v0.8.4`) → *Create new tag* → *Publish*.
+   Oder lokal: `git tag v0.8.4 && git push origin v0.8.4`.
+
+Passt der Tag nicht zur Version in `driver.json`, bricht der Build ab.
+Der Build läuft per Emulation und dauert einige Minuten.
+
 ## driver.json — wo der Treiber sie sucht
 
 `driver.py` sucht die `driver.json` erst neben `__file__`, dann im
