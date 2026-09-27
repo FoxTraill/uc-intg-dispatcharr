@@ -1,0 +1,78 @@
+{
+  "driver_id": "dispatcharr_local",
+  "version": "0.8.3",
+  "min_core_api": "0.20.0",
+  "name": {
+    "en": "Dispatcharr Now Playing",
+    "de": "Dispatcharr Now Playing"
+  },
+  "icon": "uc:tv",
+  "description": {
+    "en": "Shows the currently playing IPTV channel from Dispatcharr (filtered by client IP). Media Player widget with channel logo, current EPG program info and stream source switching. Runs natively on the remote.",
+    "de": "Zeigt den aktuell laufenden IPTV-Sender von Dispatcharr (gefiltert nach Client-IP). Media-Player-Widget mit Senderlogo, aktuellem EPG-Programm und Stream-Quellenwechsel. Laeuft nativ auf der Remote."
+  },
+  "developer": {
+    "name": "Community",
+    "url": "https://github.com/Dispatcharr/Dispatcharr"
+  },
+  "home_page": "https://github.com/Dispatcharr/Dispatcharr",
+  "setup_data_schema": {
+    "title": {
+      "en": "Dispatcharr setup",
+      "de": "Dispatcharr Setup"
+    },
+    "settings": [
+      {
+        "id": "url",
+        "label": {
+          "en": "Dispatcharr URL (e.g. http://192.168.1.10:9191)",
+          "de": "Dispatcharr URL (z.B. http://192.168.1.10:9191)"
+        },
+        "field": {
+          "text": {
+            "value": ""
+          }
+        }
+      },
+      {
+        "id": "api_key",
+        "label": {
+          "en": "API Key",
+          "de": "API Key"
+        },
+        "field": {
+          "text": {
+            "value": ""
+          }
+        }
+      },
+      {
+        "id": "client_ip",
+        "label": {
+          "en": "Client IP to filter (e.g. your Shield/Apple TV)",
+          "de": "Client-IP filtern (z.B. Shield/Apple TV)"
+        },
+        "field": {
+          "text": {
+            "value": ""
+          }
+        }
+      },
+      {
+        "id": "poll_interval",
+        "label": {
+          "en": "Poll interval (seconds)",
+          "de": "Poll-Intervall (Sekunden)"
+        },
+        "field": {
+          "number": {
+            "value": 10,
+            "min": 5,
+            "max": 60
+          }
+        }
+      }
+    ]
+  },
+  "release_date": "2026-09-12"
+}
