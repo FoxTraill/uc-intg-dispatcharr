@@ -19,6 +19,7 @@ When a stream stutters, switch to another source with a single tap.
 - [How it works](#how-it-works)
 - [Troubleshooting](#troubleshooting)
 - [Development](#development)
+- [License](#license)
 
 ## Features
 
@@ -161,6 +162,12 @@ Bug reports and ideas are welcome — please
 For general questions about the remote, the
 [Unfolded Circle community forum](https://unfolded.community/) is the best
 place.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE). It is provided
+"as is", without warranty of any kind. Bundled third-party packages keep
+their own licenses, see [docs/licenses.md](docs/licenses.md).
 
 ## Credits
 

@@ -30,6 +30,7 @@ mv artifacts/bin/intg-dispatcharr artifacts/bin/driver
 # - im Bundle         -> ueber --add-data, Fallback ueber __file__
 cp driver.json artifacts/
 cp driver.json artifacts/bin/
+cp LICENSE artifacts/
 
 OUT="uc-intg-dispatcharr-${VERSION}-aarch64.tar.gz"
 tar czf "$OUT" -C artifacts .

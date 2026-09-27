@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- MIT license and list of bundled third-party licenses.
+- Issue templates for bug reports and feature requests.
+
 ### Changed
 - README rewritten in English; build and release details moved to
   `docs/development.md`, changelog moved to this file.
-- Issue templates for bug reports and feature requests.
 
 ## [0.8.4] - 2026-09-27
 
