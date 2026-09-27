@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Unfolded Circle Community Forum
+    url: https://unfolded.community/
+    about: General questions about the remote and integrations.
+  - name: Dispatcharr
+    url: https://github.com/Dispatcharr/Dispatcharr
+    about: Problems with streams, EPG or logos inside Dispatcharr itself.

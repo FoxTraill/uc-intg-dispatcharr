@@ -11,6 +11,15 @@ When a stream stutters, switch to another source with a single tap.
 ![Widget on the Remote 3](docs/screenshot.png)
 -->
 
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Setup](#setup)
+- [Entities](#entities)
+- [How it works](#how-it-works)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+
 ## Features
 
 - 📺 **Now playing widget** — channel logo, EPG title and progress bar for the
@@ -58,8 +67,32 @@ The integration does not control playback. Use your player's integration
 
 | Entity | Type | What it does |
 |---|---|---|
-| `dispatcharr_now_playing` | Media player | Widget with logo, program and progress. ⏭ / ⏮ switch sources, the source list lets you pick one, tapping the logo switches to the next one. |
-| `dispatcharr_next_source` | Button | Switches to the next source of the running channel. |
+| `dispatcharr_now_playing` | Media player | Widget with logo, program and progress |
+| `dispatcharr_next_source` | Button | Switches to the next source of the running channel |
+
+### Media player attributes
+
+| Attribute | Content |
+|---|---|
+| State | `Playing` while your client watches a channel, otherwise `Off` |
+| Title | Current program (with episode title), or the channel name without EPG data |
+| Artist | Active source, e.g. `RTL · 2/7 · Provider` (prefixed with the channel name if there is no logo) |
+| Artwork | Channel logo from the built-in logo proxy |
+| Position / duration | Progress of the current program |
+| Media type | `channel` |
+| Source / source list | Sources of the running channel, in failover order |
+
+### Media player commands
+
+| Command | Action |
+|---|---|
+| Next | Switch to the next source (wraps around) |
+| Previous | Switch to the previous source |
+| Select source | Switch to the selected source |
+| Play / pause | Tapping the logo in the widget — switches to the next source |
+
+Playback commands like play, pause or volume are not supported. Use your
+player's integration for those.
 
 ## How it works
 
@@ -109,5 +142,29 @@ the relevant part when opening an issue.
 ## Development
 
 Building, releasing and technical details are described in
-[docs/development.md](docs/development.md). All changes are listed in the
-[changelog](CHANGELOG.md).
+[docs/development.md](docs/development.md).
+
+## Versioning
+
+This project uses [Semantic Versioning](https://semver.org/). Available
+versions are listed on the
+[releases page](https://github.com/FoxTraill/uc-intg-dispatcharr/releases).
+
+## Changelog
+
+All notable changes are documented in the [changelog](CHANGELOG.md).
+
+## Contributions
+
+Bug reports and ideas are welcome — please
+[open an issue](https://github.com/FoxTraill/uc-intg-dispatcharr/issues/new/choose).
+For general questions about the remote, the
+[Unfolded Circle community forum](https://unfolded.community/) is the best
+place.
+
+## Credits
+
+- [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) — IPTV stream
+  and EPG management
+- [Unfolded Circle integration library](https://github.com/unfoldedcircle/integration-python-library)
+  — Python API wrapper for the remote
