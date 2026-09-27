@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-09-27
+
 ### Added
 - MIT license and list of bundled third-party licenses.
 - Issue templates for bug reports and feature requests.
@@ -57,5 +59,6 @@ On-device only: the remote re-establishes its Wi-Fi after the
   standby cycle if it failed. It now retries five times with backoff
   (2/4/6/8 s, at most 20 s).
 
-[Unreleased]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/FoxTraill/uc-intg-dispatcharr/releases/tag/v0.8.4
