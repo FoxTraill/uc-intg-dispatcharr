@@ -1,0 +1,7 @@
+# Build-Ausgaben (build.sh)
+build/
+dist/
+artifacts/
+*.spec
+*.tar.gz
+__pycache__/

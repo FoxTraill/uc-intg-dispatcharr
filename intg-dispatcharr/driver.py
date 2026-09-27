@@ -2,10 +2,10 @@
 """
 Dispatcharr Now Playing - UC Remote 3 Custom Integration.
 
-Liefert genau eine Media Player Entity, die per Polling den aktiven
+Liefert eine Media Player Entity, die per Polling den aktiven
 Dispatcharr-Stream der konfigurierten Client-IP (z.B. die Shield)
-anzeigt. Read-only - keine Steuerung. Steuerung passiert separat
-über die ADB Bridge Integration.
+anzeigt, plus einen Button für den Quellenwechsel. Die Wiedergabe
+selbst steuert weiterhin die ADB Bridge Integration.
 """
 
 import asyncio
@@ -29,7 +29,7 @@ from ucapi import (
     StatusCodes,
     UserDataResponse,
 )
-from ucapi import media_player
+from ucapi import button, media_player
 
 from client import DispatcharrClient
 from config import DriverConfig, load_config, save_config
@@ -44,8 +44,10 @@ logging.basicConfig(
     stream=sys.stdout,
 )
 _LOG = logging.getLogger("intg-dispatcharr")
-logging.getLogger("ucapi").setLevel(logging.INFO)
-logging.getLogger("client").setLevel(logging.INFO)
+# UC-Konvention: Log-Level über UC_LOG_LEVEL steuerbar (DEBUG, INFO, ...)
+_LOG_LEVEL = os.getenv("UC_LOG_LEVEL", "INFO").upper()
+for _name in ("intg-dispatcharr", "ucapi", "client", "config", "image_proxy"):
+    logging.getLogger(_name).setLevel(_LOG_LEVEL)
 
 
 # ----------------------------------------------------------------------
@@ -137,7 +139,7 @@ def _make_entity() -> media_player.MediaPlayer:
             media_player.Attributes.MEDIA_IMAGE_URL: "",
             media_player.Attributes.MEDIA_DURATION: 0,
             media_player.Attributes.MEDIA_POSITION: 0,
-            media_player.Attributes.MEDIA_TYPE: MediaContentType.TV_SHOW,
+            media_player.Attributes.MEDIA_TYPE: MediaContentType.CHANNEL,
             media_player.Attributes.SOURCE: "",
             media_player.Attributes.SOURCE_LIST: [],
         },
@@ -202,7 +204,7 @@ async def _button_cmd_handler(
     laufenden Kanal notfalls frisch ab, statt uns auf den zuletzt
     gepollten Zustand zu verlassen.
     """
-    if cmd_id != "push":
+    if cmd_id != button.Commands.PUSH:
         return StatusCodes.NOT_IMPLEMENTED
     return await _switch_relative(+1, allow_refresh=True)
 
@@ -449,10 +451,9 @@ def _build_attrs_from_stream_and_program(
     # liefere das Original-Bild ohne Padding (zur Widget-Vermessung).
     logo_url = ""
     if has_logo:
-        logo_url = logo_proxy.url_for(channel_info["logo_id"])
         cname_lower = (channel_info.get("name") or "").lower()
-        if "ruler" in cname_lower or "widget_test" in cname_lower:
-            logo_url = logo_url + "?raw=1"
+        raw = "ruler" in cname_lower or "widget_test" in cname_lower
+        logo_url = logo_proxy.url_for(channel_info["logo_id"], raw=raw)
 
     # Programm-Titel (title Zeile - Hauptanzeige)
     title = ""
@@ -526,7 +527,7 @@ def _build_attrs_from_stream_and_program(
         media_player.Attributes.MEDIA_IMAGE_URL: logo_url,
         media_player.Attributes.MEDIA_DURATION: duration_s,
         media_player.Attributes.MEDIA_POSITION: position_s,
-        media_player.Attributes.MEDIA_TYPE: MediaContentType.TV_SHOW,
+        media_player.Attributes.MEDIA_TYPE: MediaContentType.CHANNEL,
         media_player.Attributes.SOURCE: source,
         media_player.Attributes.SOURCE_LIST: source_list,
     }
@@ -540,7 +541,7 @@ def _build_attrs_off() -> dict[str, Any]:
         media_player.Attributes.MEDIA_IMAGE_URL: "",
         media_player.Attributes.MEDIA_DURATION: 0,
         media_player.Attributes.MEDIA_POSITION: 0,
-        media_player.Attributes.MEDIA_TYPE: MediaContentType.TV_SHOW,
+        media_player.Attributes.MEDIA_TYPE: MediaContentType.CHANNEL,
         media_player.Attributes.SOURCE: "",
         media_player.Attributes.SOURCE_LIST: [],
     }
@@ -582,8 +583,11 @@ async def _get_program_cached(channel_uuid: str) -> Optional[dict[str, Any]]:
         prog, ts = cached
         cache_age = now - ts
 
-        # TTL-Check
-        if cache_age < _EPG_TTL_SECONDS and prog is not None:
+        # TTL-Check. Auch "kein Programm" (None) wird gecacht - sonst
+        # holt ein Sender ohne EPG bei jedem Poll die ~200KB Antwort neu.
+        if cache_age < _EPG_TTL_SECONDS and prog is None:
+            return None
+        if cache_age < _EPG_TTL_SECONDS:
             # Zusätzlich: end_time prüfen - wenn das Programm laut
             # EPG schon vorbei ist, neu laden (Programmwechsel!)
             end_str = prog.get("end_time", "")
@@ -916,6 +920,12 @@ async def on_exit_standby() -> None:
     Unser _start_runtime() setzt device_state=CONNECTED und der erste
     Poll-Zyklus liefert die entity_states.
     """
+    if not _subscribed:
+        # Nichts abonniert (z.B. andere Activity aktiv) - dann braucht
+        # auch niemand Senderliste, Logo-Proxy oder Cache-Loop.
+        # on_subscribe startet die Runtime, sobald sie gebraucht wird.
+        _LOG.info("Remote exiting standby - no subscribed entities, staying idle")
+        return
     _LOG.info("Remote exiting standby - starting runtime")
     if cfg.is_configured():
         await _start_runtime()
@@ -981,8 +991,9 @@ async def on_unsubscribe(entity_ids: list[str]) -> None:
     wenn keine anderen Entities mehr abonniert sind die das gleiche
     Device brauchen, Runtime stoppen.
 
-    Da wir nur EINE Entity haben (dispatcharr_now_playing), heißt
-    das praktisch immer: Runtime komplett stoppen.
+    Ist nur der Button weg, läuft die Runtime weiter; ist nur das
+    Widget weg, stoppt nur der Poll-Loop. Erst wenn keine unserer
+    Entities mehr abonniert ist, wird die Runtime komplett gestoppt.
 
     Das ist der eigentliche Akku-Spar-Mechanismus: in der Kodi-
     oder anderen Activity läuft KEIN Polling von Dispatcharr.
@@ -1024,11 +1035,19 @@ async def _handle_setup(data: dict[str, str]) -> SetupAction:
     global cfg
     _LOG.info("Setup data received: keys=%s", list(data.keys()))
 
+    try:
+        poll_interval = int(float(data.get("poll_interval") or 10))
+    except (TypeError, ValueError):
+        _LOG.error("Setup: invalid poll interval %r", data.get("poll_interval"))
+        return SetupError(error_type=IntegrationSetupError.OTHER)
+    # Gleiche Grenzen wie im setup_data_schema (driver.json)
+    poll_interval = max(5, min(60, poll_interval))
+
     new = DriverConfig(
         url=str(data.get("url", "")).strip().rstrip("/"),
         api_key=str(data.get("api_key", "")).strip(),
         client_ip=str(data.get("client_ip", "")).strip(),
-        poll_interval=int(data.get("poll_interval", 10) or 10),
+        poll_interval=poll_interval,
     )
 
     if not new.url or not new.api_key or not new.client_ip:

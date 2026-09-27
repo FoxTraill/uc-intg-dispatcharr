@@ -1,4 +1,4 @@
-# uc-intg-dispatcharr v0.8.3 (on-device)
+# uc-intg-dispatcharr v0.8.4 (on-device)
 
 Dispatcharr-Integration für die Unfolded Circle Remote 3, nativ auf der Remote
 als aarch64-Binary. Funktionsgleich zur Docker-Variante v0.8.2 — nur anders
@@ -31,11 +31,29 @@ chmod +x build.sh
 ./build.sh
 ```
 
-Ergebnis: `uc-intg-dispatcharr-0.8.3-aarch64.tar.gz` (~21 MB, entpackt ~52 MB).
+Ergebnis: `uc-intg-dispatcharr-0.8.4-aarch64.tar.gz` (~21 MB, entpackt ~52 MB).
 
 Der Build läuft im offiziellen `unfoldedcircle/r2-pyinstaller:3.11.13`-Image
 unter `--platform=linux/arm64`. Auf Apple Silicon ist das nativ und schnell,
 das Image wird beim ersten Lauf gezogen.
+
+## Release über GitHub
+
+Das Archiv baut GitHub automatisch (`.github/workflows/build.yml`):
+
+- **Pull Request** → Testbuild, das Archiv hängt unter *Actions* am Lauf.
+- **Versions-Tag** → Build plus Release mit `.tar.gz` und SHA256.
+
+Neue Version veröffentlichen:
+
+1. `version` in `driver.json` erhöhen, Changelog unten ergänzen.
+2. Auf `main` mergen.
+3. Auf GitHub: *Releases → Draft a new release → Choose a tag* →
+   `v<version>` eintippen (z.B. `v0.8.4`) → *Create new tag* → *Publish*.
+   Oder lokal: `git tag v0.8.4 && git push origin v0.8.4`.
+
+Passt der Tag nicht zur Version in `driver.json`, bricht der Build ab.
+Der Build läuft per Emulation und dauert einige Minuten.
 
 ## driver.json — wo der Treiber sie sucht
 
@@ -53,7 +71,7 @@ der Core ihn aufruft.
 ## Installation
 
 1. Web-Configurator → Integrationen → Hinzufügen → Eigene Integration
-2. `uc-intg-dispatcharr-0.8.3-aarch64.tar.gz` hochladen (nicht entpacken)
+2. `uc-intg-dispatcharr-0.8.4-aarch64.tar.gz` hochladen (nicht entpacken)
 3. Setup ausfüllen:
    - **URL**: `http://192.168.1.10:9191`
    - **API Key**: Key eines Users mit Admin-Rechten (ohne Admin → HTTP 403
@@ -80,6 +98,27 @@ Erst wenn die On-Device-Variante läuft:
 - Gemessen: ~16 `entity_change`-Events/Stunde
 
 ## Changelog
+
+### 0.8.4 — Logos, UC-Richtlinien
+
+- **Logos** (`image_proxy.py`) — leerer Rand (transparent oder einfarbig)
+  wird vor dem Skalieren abgeschnitten. Die Höhe nutzt jetzt 94 % statt
+  75 % der Canvas; die Breite bleibt bei 75 %, weil das Widget nur
+  seitlich abschneidet. Quadratische Logos: 96×96 → 120×120 px, Logos
+  mit eingebautem Rand teils mehr als dreimal so groß. Die Logo-URL trägt
+  `?v=<RENDER_VERSION>`, damit die Remote nicht 24 h lang alte Bilder
+  aus dem Cache zeigt.
+- **`driver.json`** — API-Key als Passwortfeld, Entwickler/Homepage auf
+  dieses Repo statt auf das Dispatcharr-Projekt.
+- **`driver.py`**
+  - `media_type` ist `channel` statt `tv_show` (Live-TV).
+  - Log-Level über `UC_LOG_LEVEL` einstellbar.
+  - Sender ohne EPG holten bei jedem Poll die komplette EPG-Antwort
+    (~200 KB) neu, jetzt greift der 60-s-Cache auch dort.
+  - `exit_standby` startet die Runtime nur noch, wenn eine Entity
+    abonniert ist.
+  - Ungültiges Poll-Intervall im Setup führt zu `SetupError` statt zu
+    einer Exception, Werte werden auf 5–60 s begrenzt.
 
 ### 0.8.3 — Wakeup-Robustheit (on-device)
 

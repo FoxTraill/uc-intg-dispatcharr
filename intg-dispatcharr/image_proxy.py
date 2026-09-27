@@ -1,17 +1,20 @@
 """
-Image Proxy - lädt Logos von Dispatcharr, padded sie auf Quadrat,
-serviert sie für die UC Remote.
+Image Proxy - lädt Logos von Dispatcharr, normalisiert sie auf eine
+feste Canvas und serviert sie für die UC Remote.
 
 Hintergrund: Dispatcharr-Logos sind 512px breit, aber Höhe stark variabel
-(66px bis 513px). Das UC Media Widget rendert media_image_url als großes
-Quadrat - rechteckige Logos werden dadurch zentriert und winzig dargestellt.
+(66px bis 513px), und viele bringen eigenen leeren Rand mit. Direkt ins
+Media Widget gegeben, erscheinen sie dadurch unterschiedlich groß und
+oft winzig.
 
-Lösung: Wir padden zur Laufzeit auf 512x512 mit transparentem Hintergrund.
-Das Originallogo bleibt mittig, das Widget hat ein quadratisches Bild
-zum Anzeigen.
+Lösung pro Logo:
+1. Leeren Rand abschneiden (transparent oder einfarbig).
+2. Proportional in die Canvas einpassen - mit getrennten Rändern für
+   Breite und Höhe, weil das Widget nur seitlich abschneidet.
+3. Mittig auf transparenten Hintergrund setzen.
 
-Cache: PNG-Bytes pro logo_id im RAM. Cap = MAX_CACHE_BYTES, damit wir
-nicht Out-Of-Memory laufen (UC Sandbox: ~100MB Limit pro Driver).
+Cache: PNG-Bytes pro logo_id im RAM, max. MAX_CACHE_ENTRIES Einträge,
+damit wir nicht Out-Of-Memory laufen (UC Sandbox: ~100MB Limit pro Driver).
 """
 
 import asyncio
@@ -22,17 +25,31 @@ from typing import Optional
 
 import aiohttp
 from aiohttp import web
-from PIL import Image
+from PIL import Image, ImageChops
 
 _LOG = logging.getLogger(__name__)
 
 # Canvas: 512x128 (4:1) wie v0.6.1 - hat dem User am besten gefallen.
-# Lange Logos (Eurosport 512x52) wurden aber seitlich abgeschnitten.
-# Fix: SAFE_RATIO 0.80 = Logo nutzt max 80% der Canvas-Größe,
-# bekommt 51px transparenten Rand links/rechts.
 TARGET_W = 512
 TARGET_H = 128
-SAFE_RATIO = 0.75
+# Nutzbarer Anteil der Canvas, getrennt nach Richtung.
+# Breite: lange Logos (Eurosport 512x52) wurden im Widget seitlich
+# abgeschnitten, deshalb 75% (64px Rand links/rechts).
+# Höhe: oben/unten wurde nie abgeschnitten. Früher galten dort
+# ebenfalls 75% - damit bekam ein quadratisches Logo nur 96x96px.
+# Mit 94% sind es 120x120px, gut 50% mehr Fläche.
+MAX_W_RATIO = 0.75
+MAX_H_RATIO = 0.94
+# Pixel mit Alpha <= diesem Wert zählen beim Zuschneiden als leer
+# (fängt Anti-Aliasing-Reste und fast unsichtbare Schatten ab).
+TRIM_ALPHA_THRESHOLD = 16
+# Farbabstand, bis zu dem ein opaker Rand als "Hintergrund" gilt
+# (JPEG-Artefakte an weißen Rändern).
+TRIM_COLOR_TOLERANCE = 24
+# Wird in die Logo-URL geschrieben. Bei jeder Änderung an der
+# Bildaufbereitung erhöhen, sonst zeigt die Remote wegen
+# Cache-Control max-age bis zu 24h die alte Version.
+RENDER_VERSION = 2
 MAX_CACHE_ENTRIES = 200
 MAX_FETCH_TIMEOUT = 5.0
 
@@ -43,9 +60,9 @@ class LogoProxy:
     def __init__(self, dispatcharr_base_url: str, port: int = 19191):
         self._base = dispatcharr_base_url.rstrip("/")
         self._port = port
-        # logo_id -> PNG bytes (gepaddet)
-        self._cache: dict[int, bytes] = {}
-        self._fetch_locks: dict[int, asyncio.Lock] = {}
+        # (logo_id, passthrough) -> PNG bytes
+        self._cache: dict[tuple[int, bool], bytes] = {}
+        self._fetch_locks: dict[tuple[int, bool], asyncio.Lock] = {}
         self._app: Optional[web.Application] = None
         self._runner: Optional[web.AppRunner] = None
         self._site: Optional[web.TCPSite] = None
@@ -71,21 +88,70 @@ class LogoProxy:
         ip = self._public_ip or self._detect_local_ip()
         return f"http://{ip}:{self._port}"
 
-    def url_for(self, logo_id: Optional[int]) -> str:
+    def url_for(self, logo_id: Optional[int], raw: bool = False) -> str:
+        """
+        raw=True: Original ohne Aufbereitung (Test-Mode zur
+        Widget-Vermessung).
+        """
         if logo_id is None:
             return ""
-        return f"{self.public_url_base}/logo/{int(logo_id)}.png"
+        url = f"{self.public_url_base}/logo/{int(logo_id)}.png?v={RENDER_VERSION}"
+        if raw:
+            url += "&raw=1"
+        return url
 
     # ------------------------------------------------------------------
     # Image processing
     # ------------------------------------------------------------------
     @staticmethod
+    def _trim(src: Image.Image) -> Image.Image:
+        """
+        Schneidet leeren Rand ab, damit das eigentliche Logo die
+        verfügbare Fläche nutzt.
+
+        - Mit Transparenz: alles außerhalb der sichtbaren Pixel.
+        - Ohne Transparenz: ein einfarbiger Rand, sofern alle vier
+          Ecken dieselbe Farbe haben (typisch: Logo auf weißer Fläche).
+          Die Fläche selbst bleibt erhalten, nur der Überstand geht weg.
+
+        Findet sich nichts Sinnvolles, kommt das Bild unverändert zurück.
+        """
+        alpha = src.getchannel("A")
+        if alpha.getextrema()[0] < 255:
+            mask = alpha.point(lambda a: 255 if a > TRIM_ALPHA_THRESHOLD else 0)
+            bbox = mask.getbbox()
+        else:
+            rgb = src.convert("RGB")
+            w, h = rgb.size
+            corners = [
+                rgb.getpixel(p) for p in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))
+            ]
+            bg = corners[0]
+            if any(
+                max(abs(c[i] - bg[i]) for i in range(3)) > TRIM_COLOR_TOLERANCE
+                for c in corners[1:]
+            ):
+                return src
+            diff = ImageChops.difference(rgb, Image.new("RGB", rgb.size, bg))
+            mask = diff.convert("L").point(
+                lambda d: 255 if d > TRIM_COLOR_TOLERANCE else 0
+            )
+            bbox = mask.getbbox()
+
+        if not bbox:
+            return src
+        left, top, right, bottom = bbox
+        # Winzige Reste (einzelne Pixel) nicht als Logo werten
+        if right - left < 4 or bottom - top < 4:
+            return src
+        return src.crop(bbox)
+
+    @staticmethod
     def _pad_to_canvas(raw: bytes, passthrough: bool = False) -> bytes:
         """
-        Logo wird in TARGET_W x TARGET_H Canvas (512x128) eingepasst.
-        Maximal SAFE_RATIO (88%) der Canvas-Größe wird genutzt - die
-        restlichen 12% sind transparente Sicherheits-Margin damit das
-        Logo nicht an den Canvas-Rändern abgeschnitten wird.
+        Logo zuschneiden und in die TARGET_W x TARGET_H Canvas (512x128)
+        einpassen. Genutzt werden max. MAX_W_RATIO der Breite und
+        MAX_H_RATIO der Höhe, der Rest ist transparente Margin.
 
         passthrough=True: Original-PNG unverändert zurück (für Tests).
         """
@@ -93,11 +159,11 @@ class LogoProxy:
             return raw
 
         src = Image.open(io.BytesIO(raw)).convert("RGBA")
+        src = LogoProxy._trim(src)
         w, h = src.size
 
-        # Verfügbare effektive Größe nach SAFE_RATIO Margin
-        avail_w = int(TARGET_W * SAFE_RATIO)
-        avail_h = int(TARGET_H * SAFE_RATIO)
+        avail_w = int(TARGET_W * MAX_W_RATIO)
+        avail_h = int(TARGET_H * MAX_H_RATIO)
 
         # fit-contain: skaliere proportional in die avail-Box
         scale = min(avail_w / w, avail_h / h)
