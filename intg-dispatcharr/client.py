@@ -1,8 +1,7 @@
 """
-Dispatcharr API Client.
+Dispatcharr API client.
 
-Gekapselte HTTP-Calls gegen die Dispatcharr REST API.
-Alles async via aiohttp.
+Wraps the HTTP calls to the Dispatcharr REST API, fully async via aiohttp.
 """
 
 import asyncio
@@ -18,15 +17,15 @@ class DispatcharrClient:
     """Async HTTP client for Dispatcharr."""
 
     def __init__(self, base_url: str, api_key: str, timeout: float = 5.0):
-        # Normalize: kein trailing slash
+        # Normalize: no trailing slash
         self._base = base_url.rstrip("/")
         self._api_key = api_key
         # Timeouts:
-        # - sock_connect 5s: TCP-Connect muss schnell sein im LAN
-        # - total 20s: gesamte Request darf nicht länger dauern
-        # - KEIN sock_read - der hat in v0.7.1 fälschlich EPG-Calls
-        #   abgeschossen weil 200KB Response auf der Remote-CPU
-        #   manchmal länger als 5s dauert (parallel zu Logo-Pillow-Processing)
+        # - sock_connect 5s: a TCP connect in the LAN has to be fast
+        # - total 20s: upper limit for the whole request
+        # - NO sock_read: in v0.7.1 it wrongly killed EPG calls, because a
+        #   200KB response sometimes takes longer than 5s on the remote's
+        #   CPU (in parallel with Pillow logo processing)
         self._timeout = aiohttp.ClientTimeout(
             total=max(timeout, 20.0),
             sock_connect=5.0,
@@ -35,7 +34,7 @@ class DispatcharrClient:
         # Cache: channel_uuid -> {"name": str, "logo_id": int|None, "logo_url": str|None}
         self._channel_cache: dict[str, dict[str, Any]] = {}
         self._logo_cache: dict[int, str] = {}  # logo_id -> public cache_url
-        self._m3u_cache: dict[int, str] = {}  # m3u_account_id -> Provider-Name
+        self._m3u_cache: dict[int, str] = {}  # m3u_account_id -> provider name
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -58,10 +57,10 @@ class DispatcharrClient:
         """
         GET /proxy/ts/status -> list of active stream dicts.
 
-        Rückgabe:
-        - list (auch leer): erfolgreich geantwortet, Liste ist authoritativ
-        - None: HTTP/Netzwerk-Fehler, Status unbekannt - aufrufender Code
-                soll den letzten Zustand beibehalten statt OFF zu setzen
+        Returns:
+        - list (possibly empty): successful response, the list is authoritative
+        - None: HTTP/network error, status unknown - the caller should keep
+                the last state instead of switching to OFF
         """
         session = await self._get_session()
         url = f"{self._base}/proxy/ts/status"
@@ -79,10 +78,10 @@ class DispatcharrClient:
         POST /api/epg/current-programs/ with empty body returns flat list of
         currently-airing programs across all channels. We filter for our UUID.
 
-        Wir holen immer alle Programme statt nur eins, weil Dispatcharr
-        keinen single-channel Filter im Request akzeptiert (zumindest in
-        der aktuellen Version) und der Response ohnehin klein ist (~150
-        Channels).
+        We always fetch all programs instead of a single one, because
+        Dispatcharr does not accept a single-channel filter in the request
+        (at least in the current version) and the response is small anyway
+        (~150 channels).
         """
         session = await self._get_session()
         url = f"{self._base}/api/epg/current-programs/"
@@ -102,17 +101,15 @@ class DispatcharrClient:
 
     async def refresh_channel_cache(self) -> None:
         """
-        Holt alle Channels (paginiert) UND alle Logos (paginiert) und baut
-        einen In-Memory-Cache auf. Wird beim Start und periodisch (alle ~6h)
-        ausgeführt.
+        Fetches all channels (paginated) AND all logos (paginated) and builds
+        an in-memory cache. Runs at startup and periodically (every ~6h).
 
-        Das Logo kommt nicht direkt am Channel-Objekt — wir bekommen nur die
-        logo_id. Die Auflösung zu einer abrufbaren URL passiert via
-        /api/channels/logos/.
+        The logo is not part of the channel object - we only get the
+        logo_id. It is resolved to a fetchable URL via /api/channels/logos/.
         """
         session = await self._get_session()
 
-        # 1) Logos cachen (logo_id -> cache_url, public!)
+        # 1) Cache logos (logo_id -> cache_url, public!)
         logos: dict[int, str] = {}
         logos_ok = True
         page = 1
@@ -138,13 +135,13 @@ class DispatcharrClient:
                 _LOG.warning("logo pagination > 50 pages, stopping")
                 break
 
-        # Wenn der Logo-Fetch (teilweise) gescheitert ist, die Logos aus dem
-        # Bestandscache dazunehmen - sonst bekommen alle Channels logo_url
-        # None obwohl wir die URLs noch kennen.
+        # If the logo fetch (partially) failed, add the logos from the
+        # existing cache - otherwise all channels get logo_url None even
+        # though we still know the URLs.
         logo_lookup: dict[int, str] = {} if logos_ok else dict(self._logo_cache)
         logo_lookup.update(logos)
 
-        # 2) Channels cachen (uuid -> {name, logo_id, logo_url})
+        # 2) Cache channels (uuid -> {name, logo_id, logo_url})
         channels: dict[str, dict[str, Any]] = {}
         channels_ok = True
         page = 1
@@ -164,9 +161,9 @@ class DispatcharrClient:
                     continue
                 logo_id = ch.get("logo_id")
                 channels[uuid] = {
-                    # Numerische DB-ID: brauchen wir für
-                    # /api/channels/channels/<id>/streams/ (Quellenliste).
-                    # Die Proxy-Endpunkte wollen dagegen die UUID.
+                    # Numeric DB ID: needed for
+                    # /api/channels/channels/<id>/streams/ (source list).
+                    # The proxy endpoints use the UUID instead.
                     "id": ch.get("id"),
                     "name": ch.get("name") or "Unknown",
                     "logo_id": logo_id,
@@ -181,11 +178,10 @@ class DispatcharrClient:
                 _LOG.warning("channel pagination > 50 pages, stopping")
                 break
 
-        # Einen intakten Cache NIE mit einem Teilergebnis ueberschreiben.
-        # Nach dem Aufwachen aus dem Standby ist das WLAN der Remote
-        # teilweise noch nicht da; ein gescheiterter Fetch wuerde sonst
-        # Logos bzw. Kanaele loeschen - bis zum naechsten regulaeren
-        # Refresh in 6h.
+        # NEVER overwrite an intact cache with a partial result. After
+        # waking up from standby, the remote's Wi-Fi is sometimes not up
+        # yet; a failed fetch would otherwise delete logos or channels
+        # until the next regular refresh in 6h.
         if logos_ok:
             self._logo_cache = logos
         elif logos:
@@ -217,13 +213,12 @@ class DispatcharrClient:
         """
         GET /api/m3u/accounts/ -> id -> Name.
 
-        Die Quellen eines Senders heißen bei verschiedenen Providern oft
-        völlig unterschiedlich ("DE: ARD HD" vs "Das Erste FHD"). Der
-        Provider-Name ist das stabilere Unterscheidungsmerkmal, deshalb
-        landet er mit im Label der Quellenliste.
+        The sources of a channel are often named completely differently by
+        different providers ("DE: ARD HD" vs "Das Erste FHD"). The provider
+        name is the more stable distinguishing feature, so it is included in
+        the source list labels.
 
-        Fehler sind nicht fatal - dann bleiben die Labels eben ohne
-        Provider.
+        Errors are not fatal - the labels simply come without provider.
         """
         session = await self._get_session()
         url = f"{self._base}/api/m3u/accounts/"
@@ -235,8 +230,8 @@ class DispatcharrClient:
             _LOG.warning("m3u account fetch failed: %s", exc)
             return
 
-        # Endpoint liefert je nach Version eine flache Liste oder ein
-        # paginiertes Objekt
+        # Depending on the version, the endpoint returns a flat list or a
+        # paginated object
         items = data.get("results", []) if isinstance(data, dict) else data
         accounts: dict[int, str] = {}
         for acc in items or []:
@@ -247,7 +242,7 @@ class DispatcharrClient:
         self._m3u_cache = accounts
 
     def get_provider_name(self, m3u_account_id: Any) -> Optional[str]:
-        """Provider-Name zu einer m3u_account-ID, oder None wenn unbekannt."""
+        """Provider name for an m3u_account ID, or None if unknown."""
         if m3u_account_id is None:
             return None
         try:
@@ -256,7 +251,7 @@ class DispatcharrClient:
             return None
 
     # ------------------------------------------------------------------
-    # Quellen (Streams) eines Senders
+    # Sources (streams) of a channel
     # ------------------------------------------------------------------
 
     async def get_channel_streams(
@@ -265,13 +260,13 @@ class DispatcharrClient:
         """
         GET /api/channels/channels/<id>/streams/
 
-        Liefert die Quellen des Senders in der im Channel definierten
-        Reihenfolge (Priorität) - exakt die Reihenfolge, die
-        /proxy/ts/next_stream durchläuft.
+        Returns the channel's sources in the order defined in the channel
+        (priority) - exactly the order /proxy/ts/next_stream cycles
+        through.
 
-        WICHTIG: hier die numerische Channel-ID, nicht die UUID.
+        IMPORTANT: this takes the numeric channel ID, not the UUID.
 
-        Rückgabe: Liste von Stream-Dicts, oder None bei Fehler.
+        Returns: list of stream dicts, or None on error.
         """
         session = await self._get_session()
         url = f"{self._base}/api/channels/channels/{channel_id}/streams/"
@@ -288,12 +283,11 @@ class DispatcharrClient:
         """
         POST /proxy/ts/next_stream/<channel_uuid>
 
-        Springt auf die nächste Quelle in der Kanal-Reihenfolge, mit
-        Wrap-around am Ende. Funktioniert nur solange der Kanal aktiv
-        im Proxy-Modus läuft - der aktuelle Stream wird serverseitig
-        aus Redis gelesen.
+        Jumps to the next source in the channel order, wrapping around at
+        the end. Only works while the channel is actively running in proxy
+        mode - the current stream is read from Redis on the server side.
 
-        Rückgabe: (erfolg, meldung)
+        Returns: (success, message)
         """
         return await self._post_switch(
             f"{self._base}/proxy/ts/next_stream/{channel_uuid}", None
@@ -305,11 +299,11 @@ class DispatcharrClient:
         """
         POST /proxy/ts/change_stream/<channel_uuid> mit {"stream_id": N}
 
-        Wechselt gezielt auf eine bestimmte Quelle. Dispatcharr setzt
-        dabei intern die Liste der bereits probierten Streams zurück,
-        das automatische Failover fängt danach wieder sauber an.
+        Switches to a specific source. Dispatcharr internally resets the
+        list of already tried streams, so automatic failover starts over
+        cleanly afterwards.
 
-        Rückgabe: (erfolg, meldung)
+        Returns: (success, message)
         """
         return await self._post_switch(
             f"{self._base}/proxy/ts/change_stream/{channel_uuid}",
@@ -320,13 +314,12 @@ class DispatcharrClient:
         self, url: str, payload: Optional[dict[str, Any]]
     ) -> tuple[bool, str]:
         """
-        Gemeinsamer POST-Pfad für next_stream / change_stream.
+        Shared POST path for next_stream / change_stream.
 
-        Beide Endpunkte sind mit IsAdmin geschützt und antworten mit
-        aussagekräftigem JSON im Fehlerfall - das loggen wir mit, weil
-        die häufigsten Ursachen (Kanal läuft nicht, nur eine Quelle
-        vorhanden, Key ist kein Admin) sonst schwer zu unterscheiden
-        sind.
+        Both endpoints are protected with IsAdmin and return meaningful
+        JSON on errors - we log it, because the most common causes
+        (channel not running, only one source, key is not an admin) are
+        otherwise hard to tell apart.
         """
         session = await self._get_session()
         try:
@@ -373,7 +366,7 @@ class DispatcharrClient:
             return False, str(exc)
 
     def get_channel_info(self, channel_uuid: str) -> Optional[dict[str, Any]]:
-        """Lookup im lokalen Cache. Gibt None zurück wenn unbekannt."""
+        """Lookup in the local cache. Returns None if unknown."""
         return self._channel_cache.get(channel_uuid)
 
     @property

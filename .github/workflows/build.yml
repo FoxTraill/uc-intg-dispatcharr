@@ -1,11 +1,11 @@
-# Baut das aarch64-Installationsarchiv fuer die Remote und erstellt bei
-# einem Versions-Tag (z.B. v0.8.4) automatisch ein GitHub-Release.
+# Builds the aarch64 installation archive for the remote and attaches it
+# to a GitHub release when a version tag (e.g. v0.8.4) is pushed.
 #
-# Release erstellen:
-#   1. Version in driver.json erhoehen (und Changelog im README)
-#   2. auf main mergen
-#   3. Tag setzen: git tag v0.8.4 && git push origin v0.8.4
-#      (oder auf GitHub: Releases -> Draft a new release -> neuer Tag)
+# Creating a release:
+#   1. Bump the version in driver.json and update CHANGELOG.md
+#   2. Merge into main
+#   3. Create the tag: git tag v0.8.4 && git push origin v0.8.4
+#      (or on GitHub: Releases -> Draft a new release -> new tag)
 name: Build & Release
 
 on:
@@ -25,24 +25,24 @@ permissions:
 
 jobs:
   build:
-    # Privates Repo: die kostenlosen ARM-Runner gibt es nur fuer
-    # oeffentliche Repos, deshalb x86 + QEMU-Emulation fuer arm64.
+    # The free ARM runners are only available for public repositories,
+    # so this uses an x86 runner with QEMU emulation for arm64.
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
+      # Registers QEMU for arm64 (same as docker/setup-qemu-action, but
+      # without a Node.js based action)
       - name: Set up QEMU (arm64)
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
+        run: docker run --privileged --rm tonistiigi/binfmt --install arm64
 
       - name: Verify driver.json version matches tag
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           DRIVER_VERSION="v$(jq -r .version driver.json)"
           if [ "${GITHUB_REF_NAME}" != "${DRIVER_VERSION}" ]; then
-            echo "Version in driver.json (${DRIVER_VERSION}) passt nicht zum Tag (${GITHUB_REF_NAME})!"
+            echo "Version in driver.json (${DRIVER_VERSION}) doesn't match the tag (${GITHUB_REF_NAME})!"
             exit 1
           fi
 
@@ -57,7 +57,7 @@ jobs:
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.ARCHIVE }}
           path: |
@@ -68,7 +68,7 @@ jobs:
 
       - name: Create GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
           generate_release_notes: true
           files: |
