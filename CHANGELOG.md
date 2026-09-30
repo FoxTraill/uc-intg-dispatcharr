@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--self-test` option and an arm64 smoke test in the build that runs the
+  packaged driver before every release.
+
+### Changed
+- Installation archive about half the size (~16 MB instead of ~32 MB,
+  unpacked ~38 MB instead of ~86 MB): debug symbols are stripped and unused
+  modules (pydantic, Pillow AVIF/color management/Tk support) are left out.
+
 ## [0.8.5] - 2026-09-27
 
 ### Added

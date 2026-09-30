@@ -8,6 +8,18 @@ cd "$(dirname "$0")"
 VERSION=$(python3 -c "import json;print(json.load(open('driver.json'))['version'])")
 IMAGE=docker.io/unfoldedcircle/r2-pyinstaller:3.11.13
 
+# Keep the archive small (the remote has limited space and memory):
+# --strip removes debug symbols (libpython alone ships ~20 MB of them).
+# Excluded modules are never used by the driver:
+# - pydantic/pydantic_core: only an optional integration in yarl
+# - AVIF, color management (lcms2) and Tk support in Pillow: logos
+#   are PNG/JPEG/WebP/GIF, and plugins are loaded lazily, so a
+#   missing plugin simply isn't registered
+EXCLUDES="--exclude-module pydantic --exclude-module pydantic_core \
+  --exclude-module PIL._avif --exclude-module PIL.AvifImagePlugin \
+  --exclude-module PIL._imagingcms --exclude-module PIL.ImageCms \
+  --exclude-module PIL._imagingtk --exclude-module PIL.ImageTk"
+
 rm -rf dist build artifacts intg-dispatcharr.spec
 
 docker run --rm --name dispatcharr-builder \
@@ -17,8 +29,9 @@ docker run --rm --name dispatcharr-builder \
   "$IMAGE" \
   bash -c "cd /workspace && \
     python -m pip install -r requirements.txt && \
-    pyinstaller --clean --onedir --name intg-dispatcharr \
+    pyinstaller --clean --onedir --strip --name intg-dispatcharr \
       --add-data 'driver.json:.' \
+      ${EXCLUDES} \
       intg-dispatcharr/driver.py"
 
 mkdir -p artifacts/bin

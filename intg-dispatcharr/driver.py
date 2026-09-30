@@ -1090,7 +1090,31 @@ async def main() -> None:
     await api.init(driver_path, setup_handler)
 
 
+def _self_test() -> int:
+    """
+    Build check, run with --self-test: processes sample logos in all
+    formats Dispatcharr typically serves with the bundled Pillow, then
+    exits. Catches a broken or too aggressively trimmed bundle in CI.
+    """
+    import io
+
+    from PIL import Image
+
+    samples = (("PNG", "RGBA"), ("JPEG", "RGB"), ("WEBP", "RGBA"), ("GIF", "P"))
+    for fmt, mode in samples:
+        buf = io.BytesIO()
+        Image.new(mode, (200, 80), 1 if mode == "P" else (200, 30, 30)).save(buf, format=fmt)
+        size = Image.open(io.BytesIO(LogoProxy._pad_to_canvas(buf.getvalue()))).size
+        if size != (512, 128):
+            print(f"Self-test FAILED: {fmt} logo -> {size}")
+            return 1
+    print("Self-test OK")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--self-test" in sys.argv[1:]:
+        sys.exit(_self_test())
     try:
         loop.run_until_complete(main())
         loop.run_forever()
