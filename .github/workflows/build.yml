@@ -56,6 +56,21 @@ jobs:
           ls -lah "$ARCHIVE"
           echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
 
+      # Runs the packaged arm64 driver under emulation: the self-test
+      # processes sample logos with the bundled Pillow, the startup check
+      # makes sure the driver comes up and opens its WebSocket server.
+      - name: Smoke test (arm64)
+        run: |
+          mkdir -p smoke && tar xzf "$ARCHIVE" -C smoke
+          docker run --rm --platform=linux/arm64 -v "$PWD/smoke":/smoke \
+            docker.io/unfoldedcircle/r2-pyinstaller:3.11.13 \
+            bash -c 'cd /smoke/bin && ./driver --self-test'
+          docker run --rm --platform=linux/arm64 -v "$PWD/smoke":/smoke \
+            docker.io/unfoldedcircle/r2-pyinstaller:3.11.13 \
+            bash -c 'mkdir -p /tmp/cfg && cd /smoke/bin && \
+              UC_CONFIG_HOME=/tmp/cfg timeout 45 ./driver > /tmp/driver.log 2>&1; \
+              cat /tmp/driver.log; grep -q "Driver is up" /tmp/driver.log'
+
       - name: Upload build artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
