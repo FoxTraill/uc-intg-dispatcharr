@@ -7,12 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-09-30
+
 ### Added
 - `--self-test` option and an arm64 smoke test in the build that runs the
   packaged driver before every release.
 
 ### Changed
-- Installation archive about half the size (~16 MB instead of ~32 MB,
+- Installation archive about half the size (15 MB instead of 32 MB,
   unpacked ~38 MB instead of ~86 MB): debug symbols are stripped and unused
   modules (pydantic, Pillow AVIF/color management/Tk support) are left out.
 
@@ -68,6 +70,7 @@ On-device only: the remote re-establishes its Wi-Fi after the
   standby cycle if it failed. It now retries five times with backoff
   (2/4/6/8 s, at most 20 s).
 
-[Unreleased]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.5...HEAD
+[Unreleased]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.6...HEAD
+[0.8.6]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/FoxTraill/uc-intg-dispatcharr/releases/tag/v0.8.4
