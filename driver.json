@@ -1,6 +1,6 @@
 {
   "driver_id": "dispatcharr_local",
-  "version": "0.8.6",
+  "version": "0.8.7",
   "min_core_api": "0.20.0",
   "name": {
     "en": "Dispatcharr Now Playing",
@@ -74,5 +74,5 @@
       }
     ]
   },
-  "release_date": "2026-09-30"
+  "release_date": "2026-10-27"
 }

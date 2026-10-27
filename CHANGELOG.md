@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-10-27
+
+### Fixed
+- The widget could go blank after tapping the logo or pressing next/previous
+  until the next regular poll. The command is now answered right after the
+  switch, and the refreshed state is sent afterwards, always in full, so it
+  replaces whatever the remote showed while the command was running.
+
 ## [0.8.6] - 2026-09-30
 
 ### Added
@@ -70,7 +78,8 @@ On-device only: the remote re-establishes its Wi-Fi after the
   standby cycle if it failed. It now retries five times with backoff
   (2/4/6/8 s, at most 20 s).
 
-[Unreleased]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.6...HEAD
+[Unreleased]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.7...HEAD
+[0.8.7]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/FoxTraill/uc-intg-dispatcharr/releases/tag/v0.8.4

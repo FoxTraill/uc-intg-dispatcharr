@@ -244,7 +244,7 @@ async def _switch_relative(
     if offset > 0:
         ok, msg = await client.next_stream(channel_uuid)
         if ok:
-            await _refresh_after_switch()
+            _schedule_refresh_after_switch()
             return StatusCodes.OK
         # "No alternate streams available" is not a server error, it
         # simply means the channel has only one source.
@@ -273,7 +273,7 @@ async def _switch_relative(
     ok, _ = await client.change_stream(channel_uuid, target["id"])
     if not ok:
         return StatusCodes.SERVER_ERROR
-    await _refresh_after_switch()
+    _schedule_refresh_after_switch()
     return StatusCodes.OK
 
 
@@ -297,8 +297,29 @@ async def _switch_to_source_name(name: str) -> StatusCodes:
     ok, _ = await client.change_stream(channel_uuid, target["id"])
     if not ok:
         return StatusCodes.SERVER_ERROR
-    await _refresh_after_switch()
+    _schedule_refresh_after_switch()
     return StatusCodes.OK
+
+
+# Background refreshes after a switch (referenced so they aren't
+# garbage collected while running).
+_refresh_tasks: set[asyncio.Task] = set()
+
+
+def _schedule_refresh_after_switch() -> None:
+    """
+    Refreshes the widget after a switch without delaying the command
+    response.
+
+    The switch is triggered by tapping the logo, which the remote sends
+    as play_pause. The remote UI changes the widget optimistically until
+    the command is answered. If the refresh ran before the answer, the
+    UI could overwrite our fresh state with its own and the widget stayed
+    blank until the next regular poll. So: answer first, refresh after.
+    """
+    task = loop.create_task(_refresh_after_switch())
+    _refresh_tasks.add(task)
+    task.add_done_callback(_refresh_tasks.discard)
 
 
 async def _refresh_after_switch() -> None:
@@ -308,9 +329,14 @@ async def _refresh_after_switch() -> None:
     Dispatcharr only confirms the switch once the new upstream is
     actually open; an immediate poll would still read the old stream_id
     from Redis.
+
+    The full state is always sent, even if nothing changed, so the remote
+    replaces whatever it showed while the command was running.
     """
+    global _last_attrs
     await asyncio.sleep(1.5)
     try:
+        _last_attrs = {}
         await _poll_once()
     except Exception as exc:
         _LOG.warning("Refresh after source switch failed: %s", exc)
