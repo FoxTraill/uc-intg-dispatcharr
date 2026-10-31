@@ -63,7 +63,6 @@ The integration does not control playback. Use your player's integration
 | **API key** | | API key of a Dispatcharr user with admin rights |
 | **Client IP** | `192.168.1.50` | IP of the device you watch on — only its stream is shown |
 | **Poll interval** | `10` | How often the status is refreshed, 5–60 seconds |
-| **Logo format** | `Wide` | **Wide** for the large widget, **Square** for the compact widget that shows the logo as a small square next to the text |
 
 To change a setting later, run the setup again (web configurator → integration → *Configure*). Fields left empty keep their current value, so you don't need to enter the API key again.
 
@@ -90,10 +89,8 @@ To change a setting later, run the setup again (web configurator → integration
 
 | Command | Action |
 |---|---|
-| Next | Switch to the next source (wraps around) |
-| Previous | Switch to the previous source |
+| Play / pause | ⏯ button or tapping the logo — switches to the next source (wraps around) |
 | Select source | Switch to the selected source |
-| Play / pause | Tapping the logo in the widget — switches to the next source |
 
 Playback commands like play, pause or volume are not supported. Use your
 player's integration for those.

@@ -9,6 +9,7 @@ by the player's own integration (e.g. ADB Bridge).
 """
 
 import asyncio
+import ipaddress
 import logging
 import os
 import sys
@@ -97,6 +98,10 @@ _poll_counter: int = 0
 # Last known state (compared before sending entity_change events)
 _last_attrs: dict[str, Any] = {}
 
+# Client IPs seen in the last poll that found no stream for cfg.client_ip.
+# Logged once per change, so a mistyped client IP shows up in the log.
+_last_unmatched_ips: Optional[frozenset[str]] = None
+
 
 # ----------------------------------------------------------------------
 # Entity factory
@@ -106,13 +111,17 @@ def _make_entity() -> media_player.MediaPlayer:
     Media player entity.
 
     Displaying is still the core (logo, EPG title, progress). On top of
-    that there are active commands for switching the Dispatcharr source of
+    that there are two commands for switching the Dispatcharr source of
     the running channel:
 
-    - NEXT     -> next source (⏭ in the widget, one-tap solution)
-    - PREVIOUS -> previous source (⏮ in the widget)
-    - PLAY_PAUSE -> switches to next source (renders the transport row)
+    - PLAY_PAUSE -> next source (⏯ button or tap on the logo)
     - SELECT_SOURCE -> pick a specific source from the list
+
+    No NEXT/PREVIOUS: it's live TV, so the widget shows no skip buttons.
+    The handler still accepts them (cheap, harmless if a macro sends them).
+
+    Playback itself is still controlled by the player (e.g. ADB Bridge in
+    the activity).
     """
     return media_player.MediaPlayer(
         identifier=ENTITY_ID,
@@ -125,9 +134,7 @@ def _make_entity() -> media_player.MediaPlayer:
             media_player.Features.MEDIA_DURATION,
             media_player.Features.MEDIA_POSITION,
             media_player.Features.MEDIA_TYPE,
-            # Source switching & Transport controls (füllt den Freiraum)
-            media_player.Features.NEXT,
-            media_player.Features.PREVIOUS,
+            # Source switching
             media_player.Features.SELECT_SOURCE,
             media_player.Features.PLAY_PAUSE,
         ],
@@ -177,8 +184,10 @@ async def _cmd_handler(
             return StatusCodes.BAD_REQUEST
         return await _switch_to_source_name(str(source))
 
-    # Tapping the logo or pressing play/pause in the media widget
-    # switches to the next source.
+    # Tapping the logo or the ⏯ button in the media widget sends
+    # play_pause. We have no playback control (that runs through the
+    # player's integration), so play_pause is free here and mapped to
+    # source switching: tap = next source.
     if cmd_id == media_player.Commands.PLAY_PAUSE:
         return await _switch_relative(+1)
 
@@ -306,6 +315,12 @@ def _schedule_refresh_after_switch() -> None:
     """
     Refreshes the widget after a switch without delaying the command
     response.
+
+    The switch is triggered by tapping the logo, which the remote sends
+    as play_pause. The remote UI changes the widget optimistically until
+    the command is answered. If the refresh ran before the answer, the
+    UI could overwrite our fresh state with its own and the widget stayed
+    blank until the next regular poll. So: answer first, refresh after.
     """
     task = loop.create_task(_refresh_after_switch())
     _refresh_tasks.add(task)
@@ -315,6 +330,13 @@ def _schedule_refresh_after_switch() -> None:
 async def _refresh_after_switch() -> None:
     """
     Waits briefly after a switch and fetches the state again.
+
+    Dispatcharr only confirms the switch once the new upstream is
+    actually open; an immediate poll would still read the old stream_id
+    from Redis.
+
+    The full state is always sent, even if nothing changed, so the remote
+    replaces whatever it showed while the command was running.
     """
     global _last_attrs
     await asyncio.sleep(1.5)
@@ -333,6 +355,13 @@ def _source_labels(sources: list[dict[str, Any]]) -> list[str]:
     Display names for the source list.
 
     Format: "<priority>. <provider> - <stream name>"
+
+    The priority comes first because it shows the failover order and
+    guarantees unique labels (required for mapping back on
+    SELECT_SOURCE). The provider comes before the stream name because
+    different providers often name the same channel completely
+    differently - the provider is the more stable feature to recognize
+    a source by.
     """
     labels: list[str] = []
     for i, s in enumerate(sources):
@@ -372,6 +401,7 @@ async def _get_sources_cached(
 
     sources = await client.get_channel_streams(channel_id)
     if sources is None:
+        # Error: keep the old cache instead of clearing the list
         return cached[0] if cached else None
 
     _source_cache[channel_id] = (sources, now)
@@ -383,6 +413,7 @@ def _parse_iso(ts: str) -> Optional[datetime]:
     if not ts:
         return None
     try:
+        # Python 3.11+ accepts 'Z' directly; replace it for older versions
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except Exception:
         return None
@@ -397,6 +428,12 @@ def _source_line(
     Short form of the active source for the line below the title.
 
     Format: "<stream name> · <position>/<total> · <provider>"
+    Example: "RTL · 2/7 · TS4_proxy_AUS"
+
+    Space on the display is limited, so this is deliberately compact.
+    Unknown parts are left out instead of showing placeholders - with
+    sparse data the line stays short instead of filled with question
+    marks.
     """
     parts: list[str] = []
 
@@ -409,10 +446,14 @@ def _source_line(
 
         if name:
             parts.append(name)
+        # Show the position even with a single source ("1/1") - that
+        # tells at a glance that there is no alternative.
         parts.append(f"{active_idx + 1}/{len(sources)}")
         if provider:
             parts.append(provider)
     else:
+        # Active stream_id not in the list (e.g. during a failover) -
+        # at least show the raw name from the status.
         name = (stream.get("stream_name") or "").strip()
         if name:
             parts.append(name)
@@ -427,6 +468,7 @@ def _build_attrs_from_stream_and_program(
     sources: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     """Maps API data to media player attributes."""
+    # Channel name: only as fallback when there is NO logo (redundant otherwise)
     has_logo = bool(channel_info and channel_info.get("logo_id") is not None and logo_proxy)
 
     if channel_info and channel_info.get("name"):
@@ -434,12 +476,16 @@ def _build_attrs_from_stream_and_program(
     else:
         channel_name = stream.get("stream_name") or "Unknown"
 
+    # Logo - via the local proxy with normalized size.
+    # Test mode: if the channel name contains "ruler" or "widget_test",
+    # serve the original image unprocessed (for measuring the widget).
     logo_url = ""
     if has_logo:
         cname_lower = (channel_info.get("name") or "").lower()
         raw = "ruler" in cname_lower or "widget_test" in cname_lower
         logo_url = logo_proxy.url_for(channel_info["logo_id"], raw=raw)
 
+    # Program title (title line - main display)
     title = ""
     duration_s = 0
     position_s = 0
@@ -460,6 +506,9 @@ def _build_attrs_from_stream_and_program(
             duration_s = max(total, 0)
             position_s = max(0, min(elapsed, duration_s))
 
+    # No program: channel name as title, no artist
+    # Program + logo: program as title, NO artist (the logo shows the channel)
+    # Program but no logo: program as title, channel as artist
     if not title:
         title = channel_name
         artist = ""
@@ -468,6 +517,10 @@ def _build_attrs_from_stream_and_program(
     else:
         artist = channel_name
 
+    # Source list + currently active source.
+    # The active source is determined via the stream_id from the status
+    # poll, not via the name - names are often duplicated across
+    # providers.
     source_list: list[str] = []
     source = ""
     active_idx: Optional[int] = None
@@ -481,13 +534,20 @@ def _build_attrs_from_stream_and_program(
                     source = source_list[i]
                     break
         if not source:
+            # Source is running but not in the list (e.g. just
+            # removed) - show the raw name from the status
             source = stream.get("stream_name") or ""
 
+    # Line below the title: which source is currently running. This field
+    # used to be empty when there is a logo (the channel name would be
+    # redundant next to the logo) - that space is used for it now.
     source_line = _source_line(sources, active_idx, stream)
     if source_line:
         if has_logo:
             artist = source_line
         else:
+            # Without a logo nothing else shows the channel name when a
+            # program title is shown above - so show both.
             artist = f"{channel_name} · {source_line}" if artist else source_line
 
     return {
@@ -528,12 +588,23 @@ async def _push(attrs: dict[str, Any]) -> None:
 
 
 # EPG cache: channel_uuid -> (program_dict, fetch_timestamp)
+# Avoids polling the 200KB EPG JSON every 10s.
 _epg_cache: dict[str, tuple[Optional[dict[str, Any]], float]] = {}
 _EPG_TTL_SECONDS = 60.0
 
 
 async def _get_program_cached(channel_uuid: str) -> Optional[dict[str, Any]]:
-    """Fetches the EPG program for a channel, with a local cache."""
+    """
+    Fetches the EPG program for a channel, with a local cache.
+
+    The cache is invalidated when:
+    1. It is older than _EPG_TTL_SECONDS (default 60s)
+    2. The cached program has already ended according to its end_time
+       (which means a new program has started)
+
+    Saves bandwidth while watching continuously, but still makes sure
+    program changes are detected.
+    """
     import time
     from datetime import datetime, timezone
     now = time.time()
@@ -542,25 +613,33 @@ async def _get_program_cached(channel_uuid: str) -> Optional[dict[str, Any]]:
         prog, ts = cached
         cache_age = now - ts
 
+        # TTL check. "No program" (None) is cached as well - otherwise a
+        # channel without EPG re-fetches the ~200KB response on every poll.
         if cache_age < _EPG_TTL_SECONDS and prog is None:
             return None
         if cache_age < _EPG_TTL_SECONDS:
+            # Also check end_time - if the program has already ended
+            # according to the EPG, reload (program change!)
             end_str = prog.get("end_time", "")
             if end_str:
                 try:
                     end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
                     now_utc = datetime.now(timezone.utc)
                     if now_utc < end_dt:
+                        # Program still running according to EPG -> use cache
                         return prog
+                    # Otherwise fall through -> cache is stale, fetch again
                     _LOG.info(
                         "EPG cache for %s expired (program ended %s)",
                         channel_uuid, end_str,
                     )
                 except Exception:
+                    # On parse errors: use the cache anyway
                     return prog
             else:
                 return prog
 
+    # Cache miss / expired: fetch again
     prog = await client.get_current_program_for(channel_uuid)
     _epg_cache[channel_uuid] = (prog, now)
     return prog
@@ -573,10 +652,15 @@ async def _poll_once() -> None:
 
     streams = await client.get_active_streams()
 
+    # None = network/HTTP error, NOT "no active streams".
+    # Keep the last known state so the logo doesn't suddenly disappear,
+    # e.g. when Wi-Fi is not fully up after wakeup or Dispatcharr is
+    # briefly unreachable.
     if streams is None:
         _LOG.debug("Streams unavailable (network error?), keeping last state")
         return
 
+    # Find the stream that belongs to our client IP
     matching: Optional[dict[str, Any]] = None
     for stream in streams:
         clients_list = stream.get("clients", []) or []
@@ -589,32 +673,55 @@ async def _poll_once() -> None:
 
     global _current_channel_uuid, _current_channel_id, _current_stream_id
 
+    global _last_unmatched_ips
     if not matching:
+        other_ips = frozenset(
+            c.get("ip_address")
+            for s in streams
+            for c in (s.get("clients") or [])
+            if c.get("ip_address")
+        )
+        if other_ips and other_ips != _last_unmatched_ips:
+            _LOG.warning(
+                "No stream for client IP %s - Dispatcharr is streaming to: %s. "
+                "Check the client IP in the setup.",
+                cfg.client_ip,
+                ", ".join(sorted(other_ips)),
+            )
+        _last_unmatched_ips = other_ips
         _current_channel_uuid = None
         _current_channel_id = None
         _current_stream_id = None
         await _push(_build_attrs_off())
         return
 
+    _last_unmatched_ips = None
     channel_uuid = matching.get("channel_id")
     channel_info = client.get_channel_info(channel_uuid) if channel_uuid else None
 
+    # If unknown: cache may be stale -> trigger a refresh
     if channel_uuid and channel_info is None:
         _LOG.info("Unknown channel uuid %s, refreshing cache", channel_uuid)
         await client.refresh_channel_cache()
         channel_info = client.get_channel_info(channel_uuid)
 
+    # Remember the current channel/source - all switch commands refer
+    # to it.
     _current_channel_uuid = channel_uuid
     _current_channel_id = channel_info.get("id") if channel_info else None
     raw_stream_id = matching.get("stream_id")
     _current_stream_id = int(raw_stream_id) if raw_stream_id is not None else None
 
+    # EPG from the cache (60s TTL) instead of fetching the ~200KB EPG
+    # response from Dispatcharr every time
     program = (
         await _get_program_cached(channel_uuid)
         if channel_uuid
         else None
     )
 
+    # Source list from the cache (10min TTL) - one request per channel,
+    # not per poll.
     sources = await _get_sources_cached(_current_channel_id)
 
     attrs = _build_attrs_from_stream_and_program(
@@ -624,10 +731,16 @@ async def _poll_once() -> None:
 
 
 async def _poll_loop() -> None:
-    """Polls endlessly every cfg.poll_interval seconds."""
+    """
+    Polls endlessly every cfg.poll_interval seconds.
+
+    Respects _active_event - in standby the loop is paused and only
+    resumes once the event is set again.
+    """
     _LOG.info("Poll loop started (every %ds)", cfg.poll_interval)
     while True:
         try:
+            # In standby: wait until EXIT_STANDBY sets the event again
             if _active_event is not None:
                 await _active_event.wait()
             await _poll_once()
@@ -661,6 +774,10 @@ async def _cache_refresh_loop() -> None:
 # Lifecycle: Connect / Disconnect / Subscribe
 # ----------------------------------------------------------------------
 async def _start_runtime() -> bool:
+    """
+    Initializes the Dispatcharr client and starts the polling tasks.
+    Called on subscribe, on exit_standby and after a successful setup.
+    """
     global client, logo_proxy, _poll_task, _cache_task
 
     if not cfg.is_configured():
@@ -668,10 +785,20 @@ async def _start_runtime() -> bool:
         await api.set_device_state(DeviceStates.ERROR)
         return False
 
+    # Clean up previous tasks, if any
     await _stop_runtime()
 
     client = DispatcharrClient(cfg.url, cfg.api_key)
 
+    # Load the initial cache - with backoff retry.
+    #
+    # On-device, _start_runtime() runs right on the EXIT_STANDBY event,
+    # and the remote only re-establishes its Wi-Fi afterwards. The first
+    # request then reliably fails with "Network is unreachable". A single
+    # attempt would leave the integration stuck in ERROR without any
+    # further attempt.
+    #
+    # 2s + 4s + 6s + 8s = at most 20s of waiting across 5 attempts.
     cache_ok = False
     for attempt in range(5):
         try:
@@ -707,13 +834,16 @@ async def _start_runtime() -> bool:
         await api.set_device_state(DeviceStates.ERROR)
         return False
 
+    # Start the logo proxy - serves processed logos to the remote
     logo_proxy = LogoProxy(cfg.url, port=cfg.logo_proxy_port)
     try:
         await logo_proxy.start()
     except Exception as exc:
         _LOG.error("Logo proxy failed to start: %s", exc)
+        # Not fatal - we continue without logos
         logo_proxy = None
 
+    # Initialize the standby event (set = active, cleared = paused)
     global _active_event
     _active_event = asyncio.Event()
     _active_event.set()
@@ -726,6 +856,13 @@ async def _start_runtime() -> bool:
 
 
 def _sync_poll_task() -> None:
+    """
+    Starts/stops the poll loop according to the media player subscription.
+
+    The button alone needs no polling - it fetches the current channel
+    when pressed. Only the widget has to be updated continuously. So a
+    button on a UI page costs not a single extra request while idle.
+    """
     global _poll_task
 
     want_poll = ENTITY_ID in _subscribed
@@ -753,7 +890,8 @@ async def _stop_runtime() -> None:
     _cache_task = None
     _active_event = None
     _epg_cache = {}
-
+    # Discard the source state: after a runtime restart a different
+    # channel may be playing by now.
     global _current_channel_uuid, _current_channel_id, _current_stream_id
     _current_channel_uuid = None
     _current_channel_id = None
@@ -773,6 +911,16 @@ async def _stop_runtime() -> None:
 
 @api.listens_to(Events.CONNECT)
 async def on_connect() -> None:
+    """
+    The remote establishes the WebSocket connection to the driver.
+
+    Important: we do NOT start the runtime here. The SUBSCRIBE_ENTITIES
+    handler does that once the remote actually wants to use an entity.
+
+    This way we only poll Dispatcharr while the widget is visible
+    somewhere - in other activities we do nothing. The Kodi integration
+    follows the same pattern (device.connect() in SUBSCRIBE).
+    """
     _LOG.info("Remote connected")
     if cfg.is_configured():
         await api.set_device_state(DeviceStates.CONNECTED)
@@ -783,19 +931,43 @@ async def on_connect() -> None:
 @api.listens_to(Events.DISCONNECT)
 async def on_disconnect() -> None:
     _LOG.info("Remote disconnected")
+    # Unlike in standby, the subscription is really gone here.
     _subscribed.clear()
     await _stop_runtime()
 
 
 @api.listens_to(Events.ENTER_STANDBY)
 async def on_enter_standby() -> None:
+    """
+    The remote goes into standby - display off, Wi-Fi possibly power
+    managed.
+
+    According to the UC docs: "the WebSocket connection might get
+    disconnected during remote standby!" - hence the official pattern
+    from Home Assistant integration issue #50: disconnect from the
+    backend completely and start again on EXIT_STANDBY.
+
+    This stops polling Dispatcharr while the remote sleeps, when nobody
+    needs the data.
+    """
     _LOG.info("Remote entering standby - stopping runtime")
     await _stop_runtime()
 
 
 @api.listens_to(Events.EXIT_STANDBY)
 async def on_exit_standby() -> None:
+    """
+    The remote is active again - start the runtime completely.
+
+    According to the sequence diagram in the UC docs, the remote usually
+    calls get_device_state and get_entity_states after exit_standby.
+    Our _start_runtime() sets device_state=CONNECTED and the first poll
+    cycle provides the entity states.
+    """
     if not _subscribed:
+        # Nothing subscribed (e.g. another activity is active) - then
+        # nobody needs the channel list, logo proxy or cache loop either.
+        # on_subscribe starts the runtime as soon as it is needed.
         _LOG.info("Remote exiting standby - no subscribed entities, staying idle")
         return
     _LOG.info("Remote exiting standby - starting runtime")
@@ -805,6 +977,14 @@ async def on_exit_standby() -> None:
 
 @api.listens_to(Events.SUBSCRIBE_ENTITIES)
 async def on_subscribe(entity_ids: list[str]) -> None:
+    """
+    The remote subscribes an entity - the widget is or becomes visible.
+    Kodi pattern: make sure the runtime is running (backend connection
+    established) so data is delivered.
+
+    If the runtime is already running (e.g. because another activity
+    also uses the Dispatcharr entity), this is a no-op.
+    """
     _LOG.info("Subscribe: %s", entity_ids)
     ours = {e for e in entity_ids if e in (ENTITY_ID, BUTTON_ID)}
     if not ours:
@@ -812,13 +992,18 @@ async def on_subscribe(entity_ids: list[str]) -> None:
 
     _subscribed.update(ours)
 
+    # Start the runtime if not active yet (Kodi does the same with
+    # device.connect() per device)
     if client is None and cfg.is_configured():
         _LOG.info("Subscribe triggered runtime start")
         await _start_runtime()
         return
 
+    # Runtime already running - adapt the poll loop to the new subscription
     _sync_poll_task()
 
+    # Poll right away so the remote doesn't wait empty for 10s until
+    # the next regular cycle
     if client and ENTITY_ID in ours:
         try:
             await _poll_once()
@@ -828,6 +1013,19 @@ async def on_subscribe(entity_ids: list[str]) -> None:
 
 @api.listens_to(Events.UNSUBSCRIBE_ENTITIES)
 async def on_unsubscribe(entity_ids: list[str]) -> None:
+    """
+    The remote unsubscribes an entity - the widget is no longer visible
+    (e.g. switching from the TV activity to another one). Kodi pattern:
+    stop the runtime when no other entity needing the same device is
+    subscribed.
+
+    If only the button is gone, the runtime keeps running; if only the
+    widget is gone, only the poll loop stops. The runtime is stopped
+    completely once none of our entities is subscribed anymore.
+
+    This is the actual battery saving mechanism: in the Kodi or any
+    other activity there is NO polling of Dispatcharr.
+    """
     _LOG.info("Unsubscribe: %s", entity_ids)
     ours = {e for e in entity_ids if e in (ENTITY_ID, BUTTON_ID)}
     if not ours:
@@ -836,6 +1034,8 @@ async def on_unsubscribe(entity_ids: list[str]) -> None:
     _subscribed.difference_update(ours)
 
     if _subscribed:
+        # At least one entity still active - only adjust the poll loop
+        # (e.g. widget gone, button stays).
         _sync_poll_task()
         return
 
@@ -847,6 +1047,11 @@ async def on_unsubscribe(entity_ids: list[str]) -> None:
 # Setup Flow
 # ----------------------------------------------------------------------
 async def setup_handler(msg: SetupDriver) -> SetupAction:
+    """
+    Called by the remote on the initial setup and on reconfigure.
+    Takes the values from the setup form, validates them against the
+    Dispatcharr API and persists them.
+    """
     if isinstance(msg, DriverSetupRequest):
         return await _handle_setup(msg.setup_data)
     if isinstance(msg, UserDataResponse):
@@ -863,12 +1068,30 @@ async def _handle_setup(data: dict[str, str]) -> SetupAction:
     except (TypeError, ValueError):
         _LOG.error("Setup: invalid poll interval %r", data.get("poll_interval"))
         return SetupError(error_type=IntegrationSetupError.OTHER)
+    # Same limits as in the setup_data_schema (driver.json)
     poll_interval = max(5, min(60, poll_interval))
 
+    # On reconfigure, empty fields keep their current value - the setup
+    # form can't be prefilled, and nobody wants to look up the API key
+    # again just to change the poll interval.
+    url = str(data.get("url", "")).strip().rstrip("/")
+    if url and "://" not in url:
+        # "192.168.1.10:9191" is a common entry, but not a valid URL
+        url = f"http://{url}"
+        _LOG.info("Setup: no scheme in URL, using %s", url)
+
+    client_ip = str(data.get("client_ip", "")).strip()
+    if client_ip:
+        try:
+            ipaddress.ip_address(client_ip)
+        except ValueError:
+            _LOG.error("Setup: client IP %r is not a valid IP address", client_ip)
+            return SetupError(error_type=IntegrationSetupError.OTHER)
+
     new = DriverConfig(
-        url=str(data.get("url", "")).strip().rstrip("/"),
-        api_key=str(data.get("api_key", "")).strip(),
-        client_ip=str(data.get("client_ip", "")).strip(),
+        url=url or cfg.url,
+        api_key=str(data.get("api_key", "")).strip() or cfg.api_key,
+        client_ip=client_ip or cfg.client_ip,
         poll_interval=poll_interval,
     )
 
@@ -876,8 +1099,16 @@ async def _handle_setup(data: dict[str, str]) -> SetupAction:
         _LOG.error("Setup incomplete")
         return SetupError(error_type=IntegrationSetupError.OTHER)
 
+    # Validate against Dispatcharr
     test_client = DispatcharrClient(new.url, new.api_key, timeout=8.0)
     try:
+        # Tell connection and authorization problems apart, so the remote
+        # shows the matching error instead of always "authorization".
+        check = await test_client.check_connection()
+        if check == "connection":
+            return SetupError(error_type=IntegrationSetupError.CONNECTION_REFUSED)
+        if check == "auth":
+            return SetupError(error_type=IntegrationSetupError.AUTHORIZATION_ERROR)
         await test_client.refresh_channel_cache()
         if test_client.channel_count == 0:
             _LOG.error("Setup validation: channel cache empty (auth failed?)")
@@ -900,11 +1131,16 @@ async def _handle_setup(data: dict[str, str]) -> SetupAction:
 # Main
 # ----------------------------------------------------------------------
 async def main() -> None:
+    # Register entities - always at startup, independent of whether
+    # Dispatcharr is reachable. Otherwise the core could subscribe
+    # before the entities exist.
     api.available_entities.add(_make_entity())
     api.available_entities.add(_make_button())
 
+    # Start the API
     driver_path = os.path.join(os.path.dirname(__file__), "driver.json")
     if not os.path.isfile(driver_path):
+        # In the packaged form, driver.json is in ./bin/ next to driver
         driver_path = os.path.join(os.getcwd(), "driver.json")
     await api.init(driver_path, setup_handler)
 
@@ -913,7 +1149,7 @@ def _self_test() -> int:
     """
     Build check, run with --self-test: processes sample logos in all
     formats Dispatcharr typically serves with the bundled Pillow, then
-    exits.
+    exits. Catches a broken or too aggressively trimmed bundle in CI.
     """
     import io
 
