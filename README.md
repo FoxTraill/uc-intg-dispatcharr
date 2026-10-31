@@ -63,6 +63,9 @@ The integration does not control playback. Use your player's integration
 | **API key** | | API key of a Dispatcharr user with admin rights |
 | **Client IP** | `192.168.1.50` | IP of the device you watch on — only its stream is shown |
 | **Poll interval** | `10` | How often the status is refreshed, 5–60 seconds |
+| **Logo format** | `Wide` | **Wide** for the large widget, **Square** for the compact widget that shows the logo as a small square next to the text |
+
+To change a setting later, run the setup again (web configurator → integration → *Configure*). Fields left empty keep their current value, so you don't need to enter the API key again.
 
 ## Entities
 
