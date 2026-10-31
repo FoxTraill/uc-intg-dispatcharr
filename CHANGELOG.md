@@ -9,14 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.8] - 2026-10-31
 
-### Added
-- Logo format setting: **Wide** (as before, for the large widget) or
-  **Square** for the compact widget, which shows the artwork as a small
-  square. Wide logos were shrunk to a thin strip there.
-
 ### Changed
-- Reconfiguring keeps the current value of fields left empty, so the API key
-  doesn't have to be entered again.
+- Square (1:1) channel logo canvas (512×512) so logos fill the artwork slot
+  in the media player widget without shrinking.
+- Added `PLAY_PAUSE` feature so the Remote 3 renders the transport controls
+  bar (⏮ ⏯ ⏭), filling the vertical space in the widget and enabling one-tap
+  source switching.
 
 ## [0.8.7] - 2026-10-27
 
