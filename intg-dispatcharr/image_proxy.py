@@ -9,8 +9,7 @@ often tiny.
 
 Per logo:
 1. Trim empty borders (transparent or solid color).
-2. Scale proportionally into the canvas - with separate margins for
-   width and height, because the widget only crops at the sides.
+2. Scale proportionally into the canvas.
 3. Center it on a transparent background.
 
 Cache: PNG bytes per logo_id in RAM, at most MAX_CACHE_ENTRIES entries,
@@ -29,21 +28,12 @@ from PIL import Image, ImageChops
 
 _LOG = logging.getLogger(__name__)
 
-# Logo styles, picked in the setup to match the widget size on the remote:
-# style -> (canvas width, canvas height, usable width share, usable height share)
-#
-# "wide": 512x128 (4:1) as in v0.6.1 - fills the large media widget.
-#   Width: long logos (Eurosport 512x52) were cropped at the sides of the
-#   widget, hence 75% (64px margin left/right). Height: nothing was ever
-#   cropped at the top/bottom, so 94%.
-# "square": 512x512 - for the compact widget, which shows the artwork as
-#   a small square next to the text. A 4:1 image would be shrunk to a
-#   thin strip there.
-LOGO_STYLES: dict[str, tuple[int, int, float, float]] = {
-    "wide": (512, 128, 0.75, 0.94),
-    "square": (512, 512, 0.92, 0.92),
-}
-DEFAULT_LOGO_STYLE = "wide"
+# Canvas: 512x512 (1:1 quadratisch passend zum Artwork-Slot des Widgets)
+TARGET_W = 512
+TARGET_H = 512
+# 92% nutzbare Fläche für maximale Füllung ohne Rand-Clipping
+MAX_W_RATIO = 0.92
+MAX_H_RATIO = 0.92
 # Pixels with alpha <= this value count as empty when trimming
 # (catches anti-aliasing leftovers and nearly invisible shadows).
 TRIM_ALPHA_THRESHOLD = 16
@@ -53,7 +43,7 @@ TRIM_COLOR_TOLERANCE = 24
 # Written into the logo URL. Bump it on every change to the image
 # processing, otherwise the remote keeps showing the old version for up
 # to 24h because of Cache-Control max-age.
-RENDER_VERSION = 2
+RENDER_VERSION = 3
 MAX_CACHE_ENTRIES = 200
 MAX_FETCH_TIMEOUT = 5.0
 
@@ -61,15 +51,9 @@ MAX_FETCH_TIMEOUT = 5.0
 class LogoProxy:
     """Local HTTP server that serves the processed logos."""
 
-    def __init__(
-        self,
-        dispatcharr_base_url: str,
-        port: int = 19191,
-        style: str = DEFAULT_LOGO_STYLE,
-    ):
+    def __init__(self, dispatcharr_base_url: str, port: int = 19191):
         self._base = dispatcharr_base_url.rstrip("/")
         self._port = port
-        self._style = style if style in LOGO_STYLES else DEFAULT_LOGO_STYLE
         # (logo_id, passthrough) -> PNG bytes
         self._cache: dict[tuple[int, bool], bytes] = {}
         self._fetch_locks: dict[tuple[int, bool], asyncio.Lock] = {}
@@ -106,10 +90,6 @@ class LogoProxy:
         if logo_id is None:
             return ""
         url = f"{self.public_url_base}/logo/{int(logo_id)}.png?v={RENDER_VERSION}"
-        # The style is part of the URL so the remote doesn't keep showing a
-        # cached image in the previous style after a reconfigure.
-        if self._style != DEFAULT_LOGO_STYLE:
-            url += f"&s={self._style}"
         if raw:
             url += "&raw=1"
         return url
@@ -160,26 +140,23 @@ class LogoProxy:
         return src.crop(bbox)
 
     @staticmethod
-    def _pad_to_canvas(
-        raw: bytes, passthrough: bool = False, style: str = DEFAULT_LOGO_STYLE
-    ) -> bytes:
+    def _pad_to_canvas(raw: bytes, passthrough: bool = False) -> bytes:
         """
-        Trims the logo and fits it into the canvas of the given style (see
-        LOGO_STYLES). Only the usable share of width and height is filled,
-        the rest is a transparent margin.
+        Trims the logo and fits it into the TARGET_W x TARGET_H canvas
+        (512x512). At most MAX_W_RATIO of the width and MAX_H_RATIO of the
+        height are used, the rest is a transparent margin.
 
         passthrough=True: returns the original PNG unchanged (for tests).
         """
         if passthrough:
             return raw
 
-        target_w, target_h, w_ratio, h_ratio = LOGO_STYLES[style]
         src = Image.open(io.BytesIO(raw)).convert("RGBA")
         src = LogoProxy._trim(src)
         w, h = src.size
 
-        avail_w = int(target_w * w_ratio)
-        avail_h = int(target_h * h_ratio)
+        avail_w = int(TARGET_W * MAX_W_RATIO)
+        avail_h = int(TARGET_H * MAX_H_RATIO)
 
         # fit-contain: scale proportionally into the available box
         scale = min(avail_w / w, avail_h / h)
@@ -190,9 +167,9 @@ class LogoProxy:
             src = src.resize((new_w, new_h), Image.LANCZOS)
 
         # Center the logo on the full canvas (transparent margin around it)
-        canvas = Image.new("RGBA", (target_w, target_h), (0, 0, 0, 0))
-        x = (target_w - new_w) // 2
-        y = (target_h - new_h) // 2
+        canvas = Image.new("RGBA", (TARGET_W, TARGET_H), (0, 0, 0, 0))
+        x = (TARGET_W - new_w) // 2
+        y = (TARGET_H - new_h) // 2
         canvas.paste(src, (x, y), src)
 
         out = io.BytesIO()
@@ -237,9 +214,7 @@ class LogoProxy:
             # Move CPU-bound Pillow work to a thread so the event loop
             # is not blocked
             try:
-                padded = await asyncio.to_thread(
-                    self._pad_to_canvas, raw, passthrough, self._style
-                )
+                padded = await asyncio.to_thread(self._pad_to_canvas, raw, passthrough)
             except Exception as exc:
                 _LOG.warning("Logo %s padding failed: %s", logo_id, exc)
                 return None
