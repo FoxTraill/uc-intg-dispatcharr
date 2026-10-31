@@ -53,6 +53,26 @@ class DispatcharrClient:
     # Endpoints
     # ------------------------------------------------------------------
 
+    async def check_connection(self) -> str:
+        """
+        Quick setup check with a single small request.
+
+        Returns "ok", "auth" (reachable, but the API key was rejected) or
+        "connection" (not reachable: wrong URL, TLS error, server down).
+        """
+        session = await self._get_session()
+        url = f"{self._base}/api/channels/channels/?page=1&page_size=1"
+        try:
+            async with session.get(url) as resp:
+                if resp.status in (401, 403):
+                    _LOG.error("Connection check: API key rejected (HTTP %d)", resp.status)
+                    return "auth"
+                resp.raise_for_status()
+                return "ok"
+        except Exception as exc:
+            _LOG.error("Connection check failed for %s: %s", self._base, exc)
+            return "connection"
+
     async def get_active_streams(self) -> Optional[list[dict[str, Any]]]:
         """
         GET /proxy/ts/status -> list of active stream dicts.

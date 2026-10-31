@@ -7,14 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.8.8] - 2026-10-31
+## [0.8.9] - 2026-10-31
 
 ### Changed
-- Square (1:1) channel logo canvas (512×512) so logos fill the artwork slot
-  in the media player widget without shrinking.
-- Added `PLAY_PAUSE` feature so the Remote 3 renders the transport controls
-  bar (⏮ ⏯ ⏭), filling the vertical space in the widget and enabling one-tap
-  source switching.
+- Channel logos use a square canvas (512×512) and fill the artwork slot of the
+  media widget. The logo format setting from 0.8.8 is gone.
+- The widget shows the ⏮ ⏯ ⏭ transport row (`PLAY_PAUSE` feature), which
+  fills the free space; all three buttons switch the stream source.
+- Setup reports connection problems (wrong URL, TLS certificate errors,
+  server down) as such instead of as an authorization error.
+
+### Fixed
+- A URL entered without `http://` (e.g. `192.168.1.10:9191`) failed; the
+  scheme is now added automatically.
+- Reconfiguring keeps fields left empty at their current value again.
+
+### Added
+- Setup rejects a client IP that isn't a valid IP address.
+- When Dispatcharr is streaming but not to the configured client IP, the log
+  names the IPs it is streaming to, so a mistyped client IP is easy to spot.
+
+## [0.8.8] - 2026-10-31
+
+### Added
+- Logo format setting: **Wide** (as before, for the large widget) or
+  **Square** for the compact widget, which shows the artwork as a small
+  square. Wide logos were shrunk to a thin strip there.
+
+### Changed
+- Reconfiguring keeps the current value of fields left empty, so the API key
+  doesn't have to be entered again.
 
 ## [0.8.7] - 2026-10-27
 
@@ -87,7 +109,8 @@ On-device only: the remote re-establishes its Wi-Fi after the
   standby cycle if it failed. It now retries five times with backoff
   (2/4/6/8 s, at most 20 s).
 
-[Unreleased]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.8...HEAD
+[Unreleased]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.9...HEAD
+[0.8.9]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/FoxTraill/uc-intg-dispatcharr/compare/v0.8.5...v0.8.6
