@@ -33,7 +33,7 @@ from ucapi import button, media_player
 
 from client import DispatcharrClient
 from config import DriverConfig, load_config, save_config
-from image_proxy import LogoProxy
+from image_proxy import DEFAULT_LOGO_STYLE, LOGO_STYLES, LogoProxy
 
 # ----------------------------------------------------------------------
 # Logging
@@ -814,7 +814,7 @@ async def _start_runtime() -> bool:
         return False
 
     # Start the logo proxy - serves processed logos to the remote
-    logo_proxy = LogoProxy(cfg.url, port=cfg.logo_proxy_port)
+    logo_proxy = LogoProxy(cfg.url, port=cfg.logo_proxy_port, style=cfg.logo_style)
     try:
         await logo_proxy.start()
     except Exception as exc:
@@ -1066,11 +1066,20 @@ async def _handle_setup(data: dict[str, str]) -> SetupAction:
     # Same limits as in the setup_data_schema (driver.json)
     poll_interval = max(5, min(60, poll_interval))
 
+    logo_style = str(data.get("logo_style") or DEFAULT_LOGO_STYLE)
+    if logo_style not in LOGO_STYLES:
+        _LOG.warning("Setup: unknown logo style %r, using default", logo_style)
+        logo_style = DEFAULT_LOGO_STYLE
+
+    # On reconfigure, empty fields keep their current value - the setup
+    # form can't be prefilled, and nobody wants to look up the API key
+    # again just to change the logo style.
     new = DriverConfig(
-        url=str(data.get("url", "")).strip().rstrip("/"),
-        api_key=str(data.get("api_key", "")).strip(),
-        client_ip=str(data.get("client_ip", "")).strip(),
+        url=str(data.get("url", "")).strip().rstrip("/") or cfg.url,
+        api_key=str(data.get("api_key", "")).strip() or cfg.api_key,
+        client_ip=str(data.get("client_ip", "")).strip() or cfg.client_ip,
         poll_interval=poll_interval,
+        logo_style=logo_style,
     )
 
     if not new.url or not new.api_key or not new.client_ip:
@@ -1130,10 +1139,12 @@ def _self_test() -> int:
     for fmt, mode in samples:
         buf = io.BytesIO()
         Image.new(mode, (200, 80), 1 if mode == "P" else (200, 30, 30)).save(buf, format=fmt)
-        size = Image.open(io.BytesIO(LogoProxy._pad_to_canvas(buf.getvalue()))).size
-        if size != (512, 128):
-            print(f"Self-test FAILED: {fmt} logo -> {size}")
-            return 1
+        for style, (width, height, _, _) in LOGO_STYLES.items():
+            out = LogoProxy._pad_to_canvas(buf.getvalue(), style=style)
+            size = Image.open(io.BytesIO(out)).size
+            if size != (width, height):
+                print(f"Self-test FAILED: {fmt} logo ({style}) -> {size}")
+                return 1
     print("Self-test OK")
     return 0
 

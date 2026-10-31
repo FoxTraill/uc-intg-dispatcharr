@@ -21,6 +21,9 @@ class DriverConfig:
     api_key: str = ""
     client_ip: str = ""
     poll_interval: int = 10
+    # Logo format for the widget: "wide" (large widget) or "square"
+    # (compact widget). See LOGO_STYLES in image_proxy.py.
+    logo_style: str = "wide"
     # Channel cache is reloaded every X seconds
     cache_refresh_interval: int = 21600  # 6h
     # Local HTTP port of the logo proxy. UC reserves 8000-9200 and 13333.
