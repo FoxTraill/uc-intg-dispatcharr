@@ -12,8 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Channel logos use a square canvas (512×512) and fill the artwork slot of the
   media widget. The logo format setting from 0.8.8 is gone.
-- The widget shows the ⏮ ⏯ ⏭ transport row (`PLAY_PAUSE` feature), which
-  fills the free space; all three buttons switch the stream source.
+- The widget shows a ⏯ button (`PLAY_PAUSE` feature) that switches to the
+  next stream source. No ⏮ / ⏭ buttons: it's live TV.
 - Setup reports connection problems (wrong URL, TLS certificate errors,
   server down) as such instead of as an authorization error.
 

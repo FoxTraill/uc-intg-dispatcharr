@@ -89,10 +89,8 @@ To change a setting later, run the setup again (web configurator → integration
 
 | Command | Action |
 |---|---|
-| Next | Switch to the next source (wraps around) |
-| Previous | Switch to the previous source |
+| Play / pause | ⏯ button or tapping the logo — switches to the next source (wraps around) |
 | Select source | Switch to the selected source |
-| Play / pause | ⏯ button or tapping the logo — switches to the next source |
 
 Playback commands like play, pause or volume are not supported. Use your
 player's integration for those.

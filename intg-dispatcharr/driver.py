@@ -111,14 +111,14 @@ def _make_entity() -> media_player.MediaPlayer:
     Media player entity.
 
     Displaying is still the core (logo, EPG title, progress). On top of
-    that there are active commands for switching the Dispatcharr source of
+    that there are two commands for switching the Dispatcharr source of
     the running channel:
 
-    - NEXT     -> next source (⏭ in the widget, one-tap solution)
-    - PREVIOUS -> previous source (⏮ in the widget)
-    - PLAY_PAUSE -> next source; declaring it makes the remote show the
-      ⏮ ⏯ ⏭ transport row, which fills the widget's free space
+    - PLAY_PAUSE -> next source (⏯ button or tap on the logo)
     - SELECT_SOURCE -> pick a specific source from the list
+
+    No NEXT/PREVIOUS: it's live TV, so the widget shows no skip buttons.
+    The handler still accepts them (cheap, harmless if a macro sends them).
 
     Playback itself is still controlled by the player (e.g. ADB Bridge in
     the activity).
@@ -134,9 +134,7 @@ def _make_entity() -> media_player.MediaPlayer:
             media_player.Features.MEDIA_DURATION,
             media_player.Features.MEDIA_POSITION,
             media_player.Features.MEDIA_TYPE,
-            # Source switching and transport row
-            media_player.Features.NEXT,
-            media_player.Features.PREVIOUS,
+            # Source switching
             media_player.Features.SELECT_SOURCE,
             media_player.Features.PLAY_PAUSE,
         ],
