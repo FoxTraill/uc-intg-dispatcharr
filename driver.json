@@ -37,8 +37,8 @@
       {
         "id": "api_key",
         "label": {
-          "en": "API Key (leave empty to keep the current one)",
-          "de": "API Key (leer lassen = bisherigen behalten)"
+          "en": "API Key",
+          "de": "API Key"
         },
         "field": {
           "password": {
@@ -69,34 +69,6 @@
             "value": 10,
             "min": 5,
             "max": 60
-          }
-        }
-      },
-      {
-        "id": "logo_style",
-        "label": {
-          "en": "Logo format (match your widget size)",
-          "de": "Logo-Format (passend zur Widget-Größe)"
-        },
-        "field": {
-          "dropdown": {
-            "value": "wide",
-            "items": [
-              {
-                "id": "wide",
-                "label": {
-                  "en": "Wide – large widget",
-                  "de": "Breit – großes Widget"
-                }
-              },
-              {
-                "id": "square",
-                "label": {
-                  "en": "Square – compact widget",
-                  "de": "Quadratisch – kompaktes Widget"
-                }
-              }
-            ]
           }
         }
       }
